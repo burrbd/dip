@@ -24,6 +24,8 @@ func (s *Set) AddMove(m Move) {
 
 func (s *Set) Resolve() ([]Result, error) {
 	res := make([]Result, 0)
+	new := make([]board.Position, len(s.Positions))
+	copy(new, s.Positions)
 	unresolved := make([]Move, 0)
 	for _, m := range s.moves {
 		ok, err := s.ArmyGraph.IsNeighbor(m.From, m.To)
@@ -34,15 +36,23 @@ func (s *Set) Resolve() ([]Result, error) {
 			res = append(res, Result{Move: m, Success: false})
 			continue
 		}
-		if ok := s.hasPosition(m); !ok {
+		hasMatch := false
+		for i := len(s.Positions) - 1; i >= 0; i-- {
+			p := s.Positions[i]
+			if matchPosition(p, m) {
+				new[i].Territory = m.To
+				hasMatch = true
+				break
+			}
+		}
+		if !hasMatch {
 			res = append(res, Result{Move: m, Success: false})
 			continue
 		}
 		unresolved = append(unresolved, m)
 	}
-	newPositions := s.tmpPositions(unresolved)
-	contested := contests(newPositions)
-	for _, m := range unresolved {
+	contested := contests(new)
+	for _, m := range s.moves {
 		if n, ok := contested[m.To.Abbr]; ok && n > 0 {
 			res = append(res, Result{Move: m, Success: false})
 		} else {
@@ -50,24 +60,6 @@ func (s *Set) Resolve() ([]Result, error) {
 		}
 	}
 	return res, nil
-}
-
-func (s *Set) hasPosition(m Move) bool {
-	for _, p := range s.Positions {
-		if matchPosition(p, m) {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *Set) occupied(t board.Territory) bool {
-	for _, p := range s.Positions {
-		if t.ID() == p.Territory.ID() {
-			return true
-		}
-	}
-	return false
 }
 
 // contests probably throw away
@@ -82,20 +74,6 @@ func contests(p []board.Position) map[string]int {
 		}
 	}
 	return cnt
-}
-
-func (s *Set) tmpPositions(m []Move) []board.Position {
-	new := make([]board.Position, len(s.Positions))
-	copy(new, s.Positions)
-	for _, mm := range m {
-		for i := len(s.Positions) - 1; i >= 0; i-- {
-			p := s.Positions[i]
-			if matchPosition(p, mm) {
-				new[i].Territory = mm.To
-			}
-		}
-	}
-	return new
 }
 
 func matchPosition(p board.Position, m Move) bool {

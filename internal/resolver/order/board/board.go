@@ -1,5 +1,10 @@
 package board
 
+import (
+	"github.com/burrbd/kit/graph"
+	"github.com/satori/go.uuid"
+)
+
 type UnitType string
 
 const (
@@ -17,12 +22,31 @@ func (t Territory) ID() string {
 }
 
 type Unit struct {
-	Country string
-	Type    UnitType
+	id       string
+	Country  string
+	Type     UnitType
+	Position *Position
+}
+
+func NewArmy(country string, t Territory, g *graph.Simple) (Unit, error) {
+	id, err := uuid.NewV4()
+	if err != nil {
+		return Unit{}, err
+	}
+	return Unit{
+		id:      id.String(),
+		Country: country,
+		Type:    Army,
+		Position: &Position{
+			Territory: t,
+			Previous:  make([]Territory, 0),
+			graph:     g,
+		},
+	}, nil
 }
 
 type Position struct {
-	Unit Unit
-	//Retreats  []Unit
 	Territory Territory
+	Previous  []Territory
+	graph     *graph.Simple
 }

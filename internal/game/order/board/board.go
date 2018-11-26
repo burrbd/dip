@@ -20,11 +20,26 @@ type PositionMap interface {
 }
 
 type Positions struct {
-	Units map[string][]*Unit
+	territories map[string]Territory
+	Units       map[string][]*Unit
 }
 
-func NewPositions() Positions {
-	return Positions{Units: make(map[string][]*Unit)}
+func NewPositions(territories []Territory) Positions {
+	territoryMap := make(map[string]Territory)
+	for _, v := range territories {
+		territoryMap[v.Abbr] = v
+	}
+	return Positions{
+		Units:       make(map[string][]*Unit),
+		territories: territoryMap}
+}
+
+func (p Positions) Territory(abbr string) (Territory, error) {
+	t, ok := p.territories[abbr]
+	if !ok {
+		return Territory{}, fmt.Errorf("unknown territory %s", abbr)
+	}
+	return t, nil
 }
 
 func (p Positions) Add(t Territory, u *Unit) {

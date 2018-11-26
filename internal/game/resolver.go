@@ -20,10 +20,10 @@ func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positi
 		unit := p.Units[curr.Abbr][0]
 		if neighbour, _ := r.ArmyGraph.IsNeighbour(curr.Abbr, to.Abbr); neighbour {
 			if unit.PrevPositions == nil {
-				unit.PrevPositions = make([]board.Territory, 0, 1)
+				unit.PrevPositions = make([]string, 0, 1)
 			}
 			curr = to
-			unit.PrevPositions = append(unit.PrevPositions, old)
+			unit.PrevPositions = append(unit.PrevPositions, old.Abbr)
 		}
 		p.Add(curr.Abbr, unit)
 		p.Del(old.Abbr, unit)
@@ -32,7 +32,7 @@ func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positi
 		if len(units) > 1 {
 			for _, u := range units {
 				if len(u.PrevPositions) == 1 {
-					p.Add(u.PrevPositions[0].Abbr, u)
+					p.Add(u.PrevPositions[0], u)
 					p.Del(terr, u)
 				}
 			}

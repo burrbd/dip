@@ -27,26 +27,38 @@ func NewPositions() Positions {
 	return Positions{Units: make(map[string][]*Unit)}
 }
 
-func (p Positions) Add(territory string, u *Unit) {
-	if _, ok := p.Units[territory]; !ok {
-		p.Units[territory] = make([]*Unit, 0)
+func (p Positions) Add(t Territory, u *Unit) {
+	if _, ok := p.Units[t.Abbr]; !ok {
+		p.Units[t.Abbr] = make([]*Unit, 0)
 	}
-	p.Units[territory] = append(p.Units[territory], u)
+	p.Units[t.Abbr] = append(p.Units[t.Abbr], u)
 }
 
-func (p Positions) Del(territory string, u *Unit) error {
-	units, ok := p.Units[territory]
+func (p Positions) Del(t Territory, u *Unit) error {
+	units, ok := p.Units[t.Abbr]
 	if !ok {
-		return fmt.Errorf("no units in territory %s", territory)
+		return fmt.Errorf("no units in t %s", t)
 	}
-	for i, unit := range p.Units[territory] {
+	for i, unit := range p.Units[t.Abbr] {
 		if u == unit {
 			copy(units[i:], units[i+1:])
 			units[len(units)-1] = nil
 			units = units[:len(units)-1]
 		}
 	}
-	p.Units[territory] = units
+	p.Units[t.Abbr] = units
+	return nil
+}
+
+func (p Positions) Update(prev, next Territory, u *Unit) error {
+	if err := p.Del(prev, u); err != nil {
+		return err
+	}
+	p.Add(next, u)
+	if u.PrevPositions == nil {
+		u.PrevPositions = make([]Territory, 0, 1)
+	}
+	u.PrevPositions = append(u.PrevPositions, prev)
 	return nil
 }
 

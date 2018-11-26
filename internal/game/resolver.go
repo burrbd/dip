@@ -14,15 +14,29 @@ type MainPhaseResolver struct {
 }
 
 func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positions, error) {
-	newP := board.NewPositions()
 	for _, m := range s.Moves {
-		curr := m.From.Abbr
-		to := m.To.Abbr
-		unit := p.Units[curr][0]
-		if neighbour, _ := r.ArmyGraph.IsNeighbour(curr, to); neighbour {
+		old, curr := m.From, m.From
+		to := m.To
+		unit := p.Units[curr.Abbr][0]
+		if neighbour, _ := r.ArmyGraph.IsNeighbour(curr.Abbr, to.Abbr); neighbour {
+			if unit.PrevPositions == nil {
+				unit.PrevPositions = make([]board.Territory, 0, 1)
+			}
 			curr = to
+			unit.PrevPositions = append(unit.PrevPositions, old)
 		}
-		newP.Add(curr, unit)
+		p.Add(curr.Abbr, unit)
+		p.Del(old.Abbr, unit)
 	}
-	return newP, nil
+	for terr, units := range p.Units {
+		if len(units) > 1 {
+			for _, u := range units {
+				if len(u.PrevPositions) == 1 {
+					p.Add(u.PrevPositions[0].Abbr, u)
+					p.Del(terr, u)
+				}
+			}
+		}
+	}
+	return p, nil
 }

@@ -29,11 +29,11 @@ func (g mockGraph) IsNeighbour(t1, t2 string) (bool, error) {
 
 func TestMainPhaseResolver_Resolve_HandlesMoveAndReturnsNewPositions(t *testing.T) {
 	is := is.New(t)
-	mockGraph := mockGraph{
+	graph := mockGraph{
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
 	}
 
-	resolver := game.MainPhaseResolver{ArmyGraph: mockGraph}
+	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 	unit := &board.Unit{}
 	positions := board.NewPositions()
 	positions.Add("bud", unit)
@@ -45,16 +45,16 @@ func TestMainPhaseResolver_Resolve_HandlesMoveAndReturnsNewPositions(t *testing.
 
 	is.NoErr(err)
 	is.Equal(unit, resolved.Units["gal"][0])
-	is.Nil(resolved.Units["bud"])
+	is.Equal(0, len(resolved.Units["bud"]))
 }
 
 func TestMainPhaseResolver_Resolve_HandlesAnotherMoveAndReturnsNewPositions(t *testing.T) {
 	is := is.New(t)
-	mockGraph := mockGraph{
+	graph := mockGraph{
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
 	}
 
-	resolver := game.MainPhaseResolver{ArmyGraph: mockGraph}
+	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
 	unit := &board.Unit{}
 
@@ -68,15 +68,15 @@ func TestMainPhaseResolver_Resolve_HandlesAnotherMoveAndReturnsNewPositions(t *t
 
 	is.NoErr(err)
 	is.Equal(unit, resolved.Units["bud"][0])
-	is.Nil(resolved.Units["gal"])
+	is.Equal(0, len(resolved.Units["gal"]))
 }
 
 func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T) {
 	is := is.New(t)
-	mockGraph := mockGraph{
+	graph := mockGraph{
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return false, nil },
 	}
-	resolver := game.MainPhaseResolver{ArmyGraph: mockGraph}
+	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
 	unit := &board.Unit{}
 
@@ -95,10 +95,10 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 
 func TestMainPhaseResolver_Resolve_DoesNotMoveToOccupiedTerritory(t *testing.T) {
 	is := is.New(t)
-	mockGraph := mockGraph{
+	graph := mockGraph{
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
 	}
-	resolver := game.MainPhaseResolver{ArmyGraph: mockGraph}
+	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
 	u1 := &board.Unit{}
 	u2 := &board.Unit{}

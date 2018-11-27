@@ -16,19 +16,24 @@ type MainPhaseResolver struct {
 func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positions, error) {
 	for _, m := range s.Moves {
 		unit := p.Units[m.From.Abbr][0]
-		if neighbour, _ := r.ArmyGraph.IsNeighbour(m.From.Abbr, m.To.Abbr); neighbour {
+		if ok, _ := r.ArmyGraph.IsNeighbour(m.From.Abbr, m.To.Abbr); ok {
 			p.Update(m.From, m.To, unit)
 		}
 	}
-	for i, units := range p.Units {
-		if len(units) > 1 {
-			for _, u := range units {
-				if len(u.PrevPositions) == 1 {
-					terr, _ := p.Territory(i)
-					p.Update(terr, u.PrevPositions[0], u)
+
+Loop:
+	for {
+		p.ConflictHandler(func(terr board.Territory, units []*board.Unit) {
+			for j := len(units) - 1; j >= 0; j-- {
+				if len(units[j].PrevPositions) > 0 {
+					p.Update(terr, units[j].PrevPositions[0], units[j])
 				}
 			}
+		})
+		if p.ConflictCount() == 0 {
+			break Loop
 		}
 	}
+
 	return p, nil
 }

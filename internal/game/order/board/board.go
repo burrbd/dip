@@ -77,6 +77,32 @@ func (p Positions) Update(prev, next Territory, u *Unit) error {
 	return nil
 }
 
+func (p Positions) ConflictHandler(f func(Territory, []*Unit)) {
+	for terr, units := range p.Units {
+		t, err := p.Territory(terr)
+		if err != nil {
+			continue
+		}
+		if len(units) > 1 {
+			f(t, units)
+		}
+	}
+}
+
+func (p Positions) ConflictCount() int {
+	conflicts := 0
+	for terr, units := range p.Units {
+		_, err := p.Territory(terr)
+		if err != nil {
+			continue
+		}
+		if len(units) > 1 {
+			conflicts++
+		}
+	}
+	return conflicts
+}
+
 type Territory struct {
 	Abbr string
 	Name string

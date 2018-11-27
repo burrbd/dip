@@ -15,7 +15,7 @@ var (
 	bud = board.Territory{Abbr: "bud", Name: "Budapest"}
 	gal = board.Territory{Abbr: "gal", Name: "Galicia"}
 	vie = board.Territory{Abbr: "vie", Name: "Vienna"}
-	boh = board.Territory{Abbr: "boh", Name: "Vienna"}
+	boh = board.Territory{Abbr: "boh", Name: "Bohemia"}
 	lon = board.Territory{Abbr: "lon", Name: "London"}
 )
 
@@ -119,4 +119,62 @@ func TestMainPhaseResolver_Resolve_DoesNotMoveToOccupiedTerritory(t *testing.T) 
 	is.NoErr(err)
 	is.Equal(u1, resolved.Units["gal"][0])
 	is.Equal(u2, resolved.Units["bud"][0])
+}
+
+func TestMainPhaseResolver_Resolve_BouncesTwoUnitsThatMoveToSameTerritory(t *testing.T) {
+	is := is.New(t)
+	graph := mockGraph{
+		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
+	}
+	resolver := game.MainPhaseResolver{ArmyGraph: graph}
+
+	u1 := &board.Unit{}
+	u2 := &board.Unit{}
+
+	positions := newPositions()
+	positions.Add(gal, u1)
+	positions.Add(bud, u2)
+
+	orders := order.Set{}
+	orders.AddMove(order.Move{From: gal, To: vie})
+	orders.AddMove(order.Move{From: bud, To: vie})
+
+	resolved, err := resolver.Resolve(orders, positions)
+
+	is.NoErr(err)
+	is.Equal(0, len(resolved.Units["vie"]))
+	is.Equal(u1, resolved.Units["gal"][0])
+	is.Equal(u2, resolved.Units["bud"][0])
+}
+
+func TestMainPhaseResolver_Resolve_BouncesUnitsThatMoveToFromTerritory(t *testing.T) {
+	// bud -> gal, gal -> vie, gal holds
+	is := is.New(t)
+	graph := mockGraph{
+		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
+	}
+	resolver := game.MainPhaseResolver{ArmyGraph: graph}
+
+	u1 := &board.Unit{}
+	u2 := &board.Unit{}
+	u3 := &board.Unit{}
+
+	positions := newPositions()
+	positions.Add(gal, u1)
+	positions.Add(bud, u2)
+	positions.Add(vie, u3)
+
+	orders := order.Set{}
+	orders.AddMove(order.Move{From: gal, To: bud})
+	orders.AddMove(order.Move{From: bud, To: vie})
+
+	resolved, err := resolver.Resolve(orders, positions)
+
+	is.NoErr(err)
+	is.Equal(u1, resolved.Units["gal"][0])
+	is.Equal(1, len(resolved.Units["gal"]))
+	is.Equal(u2, resolved.Units["bud"][0])
+	is.Equal(1, len(resolved.Units["bud"]))
+	is.Equal(u3, resolved.Units["vie"][0])
+	is.Equal(1, len(resolved.Units["vie"]))
 }

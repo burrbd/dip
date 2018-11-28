@@ -35,9 +35,19 @@ func (s *Set) Strength(u *board.Unit) int {
 	for _, support := range s.MoveSupports {
 		if u.PrevPosition != nil &&
 			support.Move.From.Abbr == u.PrevPosition.Abbr &&
-			support.Move.To.Abbr == u.Position.Abbr {
+			support.Move.To.Abbr == u.Position.Abbr &&
+			!s.supportCut(*support) {
 			strength++
 		}
 	}
 	return strength
+}
+
+func (s *Set) supportCut(support MoveSupport) bool {
+	for _, cutMove := range s.Moves {
+		if cutMove.To == support.By && cutMove.From != support.Move.To {
+			return true
+		}
+	}
+	return false
 }

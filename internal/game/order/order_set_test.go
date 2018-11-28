@@ -29,9 +29,9 @@ func TestSet_MoveSupportCount(t *testing.T) {
 
 	positions := newPositions()
 	u1.PrevPosition = &bud
-	positions.Add(gal, u1)
-	positions.Add(vie, u2)
-	positions.Add(boh, u3)
+	positions.Add(u1)
+	positions.Add(u2)
+	positions.Add(u3)
 
 	orders := order.Set{}
 	m := order.Move{From: bud, To: gal}

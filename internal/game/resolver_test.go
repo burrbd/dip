@@ -38,9 +38,9 @@ func TestMainPhaseResolver_Resolve_HandlesMoveAndReturnsNewPositions(t *testing.
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
 	}
 	resolver := game.MainPhaseResolver{ArmyGraph: graph}
-	unit := &board.Unit{}
+	unit := &board.Unit{Position: bud}
 	positions := newPositions()
-	positions.Add(bud, unit)
+	positions.Add(unit)
 
 	orders := order.Set{}
 	orders.AddMove(order.Move{From: bud, To: gal})
@@ -60,10 +60,10 @@ func TestMainPhaseResolver_Resolve_HandlesAnotherMoveAndReturnsNewPositions(t *t
 
 	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-	unit := &board.Unit{}
+	unit := &board.Unit{Position: gal}
 
 	positions := newPositions()
-	positions.Add(gal, unit)
+	positions.Add(unit)
 
 	orders := order.Set{}
 	orders.AddMove(order.Move{From: gal, To: bud})
@@ -82,10 +82,10 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 	}
 	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-	unit := &board.Unit{}
+	unit := &board.Unit{Position: gal}
 
 	positions := newPositions()
-	positions.Add(gal, unit)
+	positions.Add(unit)
 
 	orders := order.Set{}
 	orders.AddMove(order.Move{From: gal, To: lon})
@@ -104,12 +104,12 @@ func TestMainPhaseResolver_Resolve_DoesNotMoveToOccupiedTerritory(t *testing.T) 
 	}
 	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
+	u1 := &board.Unit{Position: gal}
+	u2 := &board.Unit{Position: bud}
 
 	positions := newPositions()
-	positions.Add(gal, u1)
-	positions.Add(bud, u2)
+	positions.Add(u1)
+	positions.Add(u2)
 
 	orders := order.Set{}
 	orders.AddMove(order.Move{From: gal, To: bud})
@@ -128,12 +128,12 @@ func TestMainPhaseResolver_Resolve_BouncesTwoUnitsThatMoveToSameTerritory(t *tes
 	}
 	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
+	u1 := &board.Unit{Position: gal}
+	u2 := &board.Unit{Position: bud}
 
 	positions := newPositions()
-	positions.Add(gal, u1)
-	positions.Add(bud, u2)
+	positions.Add(u1)
+	positions.Add(u2)
 
 	orders := order.Set{}
 	orders.AddMove(order.Move{From: gal, To: vie})
@@ -155,14 +155,14 @@ func TestMainPhaseResolver_Resolve_BouncesUnitsThatMoveToFromTerritory(t *testin
 	}
 	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
-	u3 := &board.Unit{}
+	u1 := &board.Unit{Position: gal}
+	u2 := &board.Unit{Position: bud}
+	u3 := &board.Unit{Position: vie}
 
 	positions := newPositions()
-	positions.Add(gal, u1)
-	positions.Add(bud, u2)
-	positions.Add(vie, u3)
+	positions.Add(u1)
+	positions.Add(u2)
+	positions.Add(u3)
 
 	orders := order.Set{}
 	orders.AddMove(order.Move{From: gal, To: bud})
@@ -177,4 +177,39 @@ func TestMainPhaseResolver_Resolve_BouncesUnitsThatMoveToFromTerritory(t *testin
 	is.Equal(1, len(resolved.Units["bud"]))
 	is.Equal(u3, resolved.Units["vie"][0])
 	is.Equal(1, len(resolved.Units["vie"]))
+}
+
+func TestMainPhaseResolver_Resolve_GivenThereIsAConflictAndOneSideHasSupportThenSupportWins(t *testing.T) {
+	// gal -> vie
+	// boh s gal -> vie
+	// bud -> vie
+	is := is.New(t)
+	graph := mockGraph{
+		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
+	}
+	resolver := game.MainPhaseResolver{ArmyGraph: graph}
+
+	u1 := &board.Unit{Position: gal}
+	u2 := &board.Unit{Position: bud}
+	u3 := &board.Unit{Position: boh}
+
+	positions := newPositions()
+	positions.Add(u1)
+	positions.Add(u2)
+	positions.Add(u3)
+
+	orders := order.Set{}
+	galToVie := order.Move{From: gal, To: vie}
+
+	orders.AddMove(galToVie)
+	orders.AddMoveSupport(order.MoveSupport{By: boh, Move: galToVie})
+
+	orders.AddMove(order.Move{From: bud, To: vie})
+
+	resolved, err := resolver.Resolve(orders, positions)
+
+	is.NoErr(err)
+	is.Equal(u1, resolved.Units["vie"][0])
+	is.Equal(u2, resolved.Units["bud"][0])
+	is.Equal(u3, resolved.Units["boh"][0])
 }

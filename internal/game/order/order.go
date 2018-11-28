@@ -10,12 +10,35 @@ type Move struct {
 	From, To board.Territory
 }
 
+type MoveSupport struct {
+	Country  string
+	UnitType board.UnitType
+	By       board.Territory
+	Move     Move
+}
+
 type Set struct {
-	Moves []*Move
+	Moves        []*Move
+	MoveSupports []*MoveSupport
 }
 
 func (s *Set) AddMove(m Move) {
 	s.Moves = append(s.Moves, &m)
+}
+
+func (s *Set) AddMoveSupport(sup MoveSupport) {
+	s.MoveSupports = append(s.MoveSupports, &sup)
+}
+
+func (s *Set) Strength(u *board.Unit) int {
+	strength := 0
+	for _, support := range s.MoveSupports {
+		if support.Move.From.Abbr == u.PrevPosition.Abbr &&
+			support.Move.To.Abbr == u.Position.Abbr {
+			strength++
+		}
+	}
+	return strength
 }
 
 type Unresolved struct {

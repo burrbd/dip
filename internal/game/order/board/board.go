@@ -42,38 +42,39 @@ func (p Positions) Territory(abbr string) (Territory, error) {
 	return t, nil
 }
 
-func (p Positions) Add(t Territory, u *Unit) {
-	if _, ok := p.Units[t.Abbr]; !ok {
-		p.Units[t.Abbr] = make([]*Unit, 0)
+func (p Positions) Add(u *Unit) {
+	terr := u.Position.Abbr
+	if _, ok := p.Units[terr]; !ok {
+		p.Units[terr] = make([]*Unit, 0)
 	}
-	p.Units[t.Abbr] = append(p.Units[t.Abbr], u)
+	p.Units[terr] = append(p.Units[terr], u)
 }
 
-func (p Positions) Del(t Territory, u *Unit) error {
-	units, ok := p.Units[t.Abbr]
+func (p Positions) Del(u *Unit) error {
+	terr := u.Position.Abbr
+	units, ok := p.Units[terr]
 	if !ok {
-		return fmt.Errorf("no units in t %s", t)
+		return fmt.Errorf("no units in t %s", terr)
 	}
-	for i, unit := range p.Units[t.Abbr] {
+	for i, unit := range p.Units[terr] {
 		if u == unit {
 			copy(units[i:], units[i+1:])
 			units[len(units)-1] = nil
 			units = units[:len(units)-1]
 		}
 	}
-	p.Units[t.Abbr] = units
+	p.Units[terr] = units
 	return nil
 }
 
-func (p Positions) Update(prev, next Territory, u *Unit) error {
-	if err := p.Del(prev, u); err != nil {
+func (p Positions) Update(u *Unit, next Territory) error {
+	if err := p.Del(u); err != nil {
 		return err
 	}
-	p.Add(next, u)
-	if u.PrevPositions == nil {
-		u.PrevPositions = make([]Territory, 0, 1)
-	}
-	u.PrevPositions = append(u.PrevPositions, prev)
+	prev := u.Position
+	u.PrevPosition = &prev
+	u.Position = next
+	p.Add(u)
 	return nil
 }
 
@@ -113,7 +114,8 @@ func (t Territory) ID() string {
 }
 
 type Unit struct {
-	Country       string
-	Type          UnitType
-	PrevPositions []Territory
+	Country      string
+	Type         UnitType
+	Position     Territory
+	PrevPosition *Territory
 }

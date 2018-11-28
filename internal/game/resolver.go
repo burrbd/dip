@@ -17,17 +17,20 @@ func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positi
 	for _, m := range s.Moves {
 		unit := p.Units[m.From.Abbr][0]
 		if ok, _ := r.ArmyGraph.IsNeighbour(m.From.Abbr, m.To.Abbr); ok {
-			p.Update(m.From, m.To, unit)
+			p.Update(unit, m.To)
 		}
 	}
 
 Loop:
 	for {
 		p.ConflictHandler(func(terr board.Territory, units []*board.Unit) {
+			unitStrength, prevUnitStrength := 0, 0
 			for j := len(units) - 1; j >= 0; j-- {
-				if len(units[j].PrevPositions) > 0 {
-					p.Update(terr, units[j].PrevPositions[0], units[j])
+				unitStrength = s.Strength(units[j])
+				if units[j].PrevPosition != nil && unitStrength <= prevUnitStrength {
+					p.Update(units[j], *units[j].PrevPosition)
 				}
+				prevUnitStrength = unitStrength
 			}
 		})
 		if p.ConflictCount() == 0 {

@@ -33,14 +33,11 @@ func (s *Set) AddMoveSupport(sup MoveSupport) {
 func (s *Set) Strength(u *board.Unit) int {
 	strength := 0
 	for _, support := range s.MoveSupports {
-		if support.Move.From.Abbr == u.PrevPosition.Abbr &&
+		if u.PrevPosition != nil &&
+			support.Move.From.Abbr == u.PrevPosition.Abbr &&
 			support.Move.To.Abbr == u.Position.Abbr {
 			strength++
 		}
 	}
 	return strength
-}
-
-type Unresolved struct {
-	move *Move
 }

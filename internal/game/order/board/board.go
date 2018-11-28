@@ -92,15 +92,7 @@ func (p Positions) ConflictHandler(f func(Territory, []*Unit)) {
 
 func (p Positions) ConflictCount() int {
 	conflicts := 0
-	for terr, units := range p.Units {
-		_, err := p.Territory(terr)
-		if err != nil {
-			continue
-		}
-		if len(units) > 1 {
-			conflicts++
-		}
-	}
+	p.ConflictHandler(func(terr Territory, units []*Unit) { conflicts++ })
 	return conflicts
 }
 

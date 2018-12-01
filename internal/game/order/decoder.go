@@ -8,9 +8,11 @@ import (
 	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
 
-var movePrefix = `([A|F])\s([A-Za-z.]{3})\s([S|C|H])\s?`
-var moveSuffix = `([A|F])\s([A-Za-z.]*)\-([A-Za-z.]*)`
-var orderRE = regexp.MustCompile(`(` + movePrefix + `)?(` + moveSuffix + `)?`)
+var (
+	movePrefix = `([A|F])\s([A-Za-z.]{3})\s([S|C|H])\s?`
+	moveSuffix = `([A|F])\s([A-Za-z.]*)\-([A-Za-z.]*)`
+	orderRE    = regexp.MustCompile(`(` + movePrefix + `)?(` + moveSuffix + `)?`)
+)
 
 func Decode(order string) (interface{}, error) {
 	result := orderRE.FindAllStringSubmatch(order, -1)

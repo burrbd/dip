@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	movePrefix = `([A|F])\s([A-Za-z.]{3})\s([S|C|H])\s?`
-	moveSuffix = `([A|F])\s([A-Za-z.]*)\-([A-Za-z.]*)`
+	movePrefix = `([A|F])\s([A-Za-z]{3})\s([S|C|H])\s?`
+	moveSuffix = `([A|F])\s([A-Za-z]{3})\-([A-Za-z]{3})`
 	orderRE    = regexp.MustCompile(`(` + movePrefix + `)?(` + moveSuffix + `)?`)
 )
 

@@ -17,6 +17,18 @@ type MoveSupport struct {
 	Move     Move
 }
 
+type MoveConvoy struct {
+	Country string
+	By      board.Territory
+	Move    Move
+}
+
+type Hold struct {
+	Country  string
+	UnitType board.UnitType
+	Pos      board.Territory
+}
+
 type Set struct {
 	Moves        []*Move
 	MoveSupports []*MoveSupport

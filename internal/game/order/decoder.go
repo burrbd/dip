@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	movePrefix = `([A|F])\s([A-Za-z]{3})\s([S|C|H])\s?`
+	movePrefix = `([A|F])\s([A-Za-z]{3})\s([S|C|H])?`
 	moveSuffix = `([A|F])\s([A-Za-z]{3})\-([A-Za-z]{3})`
-	orderRE    = regexp.MustCompile(`(` + movePrefix + `)?(` + moveSuffix + `)?`)
+	orderRE    = regexp.MustCompile(`(` + movePrefix + `)?(\s)?(` + moveSuffix + `)?`)
 )
 
 func Decode(order string) (interface{}, error) {
@@ -21,13 +21,17 @@ func Decode(order string) (interface{}, error) {
 		return nil, errors.New("invalid order")
 	}
 	prefixMatch := matches[1] != ""
-	moveMatch := matches[5] != ""
+	sepMatch := matches[5] != ""
+	moveMatch := matches[6] != ""
 	if prefixMatch && !moveMatch {
 		return decodeHold(matches)
 	}
-	unit := unitType(rune(matches[6][0]))
-	from := strings.ToLower(matches[7])
-	to := strings.ToLower(matches[8])
+	if prefixMatch && moveMatch && !sepMatch {
+		return nil, errors.New("invalid order")
+	}
+	unit := unitType(rune(matches[7][0]))
+	from := strings.ToLower(matches[8])
+	to := strings.ToLower(matches[9])
 	move := Move{UnitType: unit, From: board.Territory{Abbr: from}, To: board.Territory{Abbr: to}}
 	if prefixMatch {
 		return decodePrefix(matches, move)

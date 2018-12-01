@@ -102,3 +102,10 @@ func TestDecode_WhenPrefixIsValidAndMoveInvalidReturnsError(t *testing.T) {
 	_, err := order.Decode(convoy)
 	is.Err(err)
 }
+
+func TestDecode_NoSpaceBetweenSuffixAndMove(t *testing.T) {
+	is := is.New(t)
+	convoy := "F Ghi CA Abc-Def"
+	_, err := order.Decode(convoy)
+	is.Err(err)
+}

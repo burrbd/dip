@@ -84,10 +84,21 @@ func (p Positions) ConflictHandler(f func(Territory, []*Unit)) {
 		if err != nil {
 			continue
 		}
-		if len(units) > 1 {
-			f(t, units)
+		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return !u.MustRetreat })
+		if len(nonRetreatingUnits) > 1 {
+			f(t, nonRetreatingUnits)
 		}
 	}
+}
+
+func unitFilter(units []*Unit, f func(*Unit) bool) []*Unit {
+	filtered := make([]*Unit, 0)
+	for _, u := range units {
+		if f(u) {
+			filtered = append(filtered, u)
+		}
+	}
+	return filtered
 }
 
 func (p Positions) ConflictCount() int {
@@ -110,4 +121,5 @@ type Unit struct {
 	Type         UnitType
 	Position     Territory
 	PrevPosition *Territory
+	MustRetreat  bool
 }

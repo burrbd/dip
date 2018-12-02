@@ -11,11 +11,7 @@ import (
 	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
 
-var cases = []struct {
-	description string
-	givenMap    []string
-	orders      []orderResult
-}{
+var cases = []orderCase{
 	{
 		description: "given a simple move, then the order is resolved",
 		givenMap:    []string{"bud", "vie"},
@@ -49,6 +45,13 @@ var cases = []struct {
 			{order: "A Bud-Vie", result: "bud"},
 		},
 	},
+	{
+		description: "given unit holds territory and is not dislodged, then unit remains on territory",
+		givenMap:    []string{"vie"},
+		orders: []orderResult{
+			{order: "A Vie H", result: "vie"},
+		},
+	},
 }
 
 func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T) {
@@ -74,13 +77,27 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 }
 
 type orderResult struct {
-	order, result string
+	order   string
+	result  string
+	retreat bool
+}
+
+type orderCase struct {
+	description string
+	givenMap    []string
+	orders      []orderResult
+	focus       bool
 }
 
 func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 	is := is.New(t)
 	graph := mockGraph{
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
+	}
+
+	focused := focusedCases(cases)
+	if len(focused) > 0 {
+		cases = focused
 	}
 
 	for _, c := range cases {
@@ -133,6 +150,16 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		}
 		is.Equal(positionTotal, len(units))
 	}
+}
+
+func focusedCases(cases []orderCase) []orderCase {
+	focused := make([]orderCase, 0)
+	for _, c := range cases {
+		if c.focus {
+			focused = append(focused, c)
+		}
+	}
+	return focused
 }
 
 var (

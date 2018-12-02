@@ -27,7 +27,10 @@ Loop:
 			unitStrength, prevUnitStrength := 0, 0
 			for j := len(units) - 1; j >= 0; j-- {
 				unitStrength = s.Strength(units[j])
-				if units[j].PrevPosition != nil && unitStrength <= prevUnitStrength {
+				if unitStrength <= prevUnitStrength && units[j].PrevPosition != nil && *units[j].PrevPosition == units[j].Position {
+					units[j].MustRetreat = true
+				}
+				if unitStrength <= prevUnitStrength && units[j].PrevPosition != nil {
 					p.Update(units[j], *units[j].PrevPosition)
 				}
 				prevUnitStrength = unitStrength

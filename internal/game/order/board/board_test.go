@@ -138,3 +138,24 @@ func TestPositions_ConflictCount(t *testing.T) {
 
 	is.Equal(2, p.ConflictCount())
 }
+
+func TestPositions_ConflictCount_WithMustRetreat(t *testing.T) {
+	is := is.New(t)
+	t1 := board.Territory{Abbr: "t1"}
+	t2 := board.Territory{Abbr: "t2"}
+	t3 := board.Territory{Abbr: "t3"}
+	p := board.NewPositions([]board.Territory{t1, t2, t3})
+	u1 := &board.Unit{Position: t1}
+	u2 := &board.Unit{Position: t1}
+	u3 := &board.Unit{Position: t2}
+	u4 := &board.Unit{Position: t2, MustRetreat: true}
+	u5 := &board.Unit{Position: t3}
+
+	p.Add(u1)
+	p.Add(u2)
+	p.Add(u3)
+	p.Add(u4)
+	p.Add(u5)
+
+	is.Equal(1, p.ConflictCount())
+}

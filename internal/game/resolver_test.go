@@ -11,68 +11,44 @@ import (
 	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
 
-var (
-	bud = board.Territory{Abbr: "bud", Name: "Budapest"}
-	gal = board.Territory{Abbr: "gal", Name: "Galicia"}
-	vie = board.Territory{Abbr: "vie", Name: "Vienna"}
-	boh = board.Territory{Abbr: "boh", Name: "Bohemia"}
-	lon = board.Territory{Abbr: "lon", Name: "London"}
-)
-
-type mockGraph struct {
-	IsNeighbourFunc func(t1, t2 string) (bool, error)
-}
-
-func (g mockGraph) IsNeighbour(t1, t2 string) (bool, error) {
-	return g.IsNeighbourFunc(t1, t2)
-}
-
-func newPositions() board.Positions {
-	return board.NewPositions([]board.Territory{bud, gal, vie, boh, lon})
-
-}
-
-func TestMainPhaseResolver_Resolve_HandlesMoveAndReturnsNewPositions(t *testing.T) {
-	is := is.New(t)
-	graph := mockGraph{
-		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-	}
-	resolver := game.MainPhaseResolver{ArmyGraph: graph}
-	unit := &board.Unit{Position: bud}
-	positions := newPositions()
-	positions.Add(unit)
-
-	orders := order.Set{}
-	orders.AddMove(order.Move{From: bud, To: gal})
-
-	resolved, err := resolver.Resolve(orders, positions)
-
-	is.NoErr(err)
-	is.Equal(unit, resolved.Units["gal"][0])
-	is.Equal(0, len(resolved.Units["bud"]))
-}
-
-func TestMainPhaseResolver_Resolve_HandlesAnotherMoveAndReturnsNewPositions(t *testing.T) {
-	is := is.New(t)
-	graph := mockGraph{
-		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-	}
-
-	resolver := game.MainPhaseResolver{ArmyGraph: graph}
-
-	unit := &board.Unit{Position: gal}
-
-	positions := newPositions()
-	positions.Add(unit)
-
-	orders := order.Set{}
-	orders.AddMove(order.Move{From: gal, To: bud})
-
-	resolved, err := resolver.Resolve(orders, positions)
-
-	is.NoErr(err)
-	is.Equal(unit, resolved.Units["bud"][0])
-	is.Equal(0, len(resolved.Units["gal"]))
+var cases = []struct {
+	description string
+	givenMap    []string
+	orders      []orderResult
+}{
+	{
+		description: "given a simple move, then the order is resolved",
+		givenMap:    []string{"bud", "vie"},
+		orders: []orderResult{
+			{order: "A Bud-Vie", result: "vie"},
+		},
+	},
+	{
+		description: "given two units attack same territory without support, then both units bounce back",
+		givenMap:    []string{"gal", "bud", "vie"},
+		orders: []orderResult{
+			{order: "A Bud-Vie", result: "bud"},
+			{order: "A Gal-Vie", result: "gal"},
+		},
+	},
+	{
+		description: "given units attack in circular chain without support, then all attacking units bounce back",
+		givenMap:    []string{"gal", "bud", "vie"},
+		orders: []orderResult{
+			{order: "A Bud-Gal", result: "bud"},
+			{order: "A Gal-Vie", result: "gal"},
+			{order: "A Vie H", result: "vie"},
+		},
+	},
+	{
+		description: "given unit attacks unsupported territory with support, then attacking unit wins",
+		givenMap:    []string{"gal", "vie", "boh", "bud"},
+		orders: []orderResult{
+			{order: "A Gal-Vie", result: "vie"},
+			{order: "A Boh S A Gal-Vie", result: "boh"},
+			{order: "A Bud-Vie", result: "bud"},
+		},
+	},
 }
 
 func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T) {
@@ -97,119 +73,85 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 	is.Equal(unit, resolved.Units["gal"][0])
 }
 
-func TestMainPhaseResolver_Resolve_DoesNotMoveToOccupiedTerritory(t *testing.T) {
-	is := is.New(t)
-	graph := mockGraph{
-		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-	}
-	resolver := game.MainPhaseResolver{ArmyGraph: graph}
-
-	u1 := &board.Unit{Position: gal}
-	u2 := &board.Unit{Position: bud}
-
-	positions := newPositions()
-	positions.Add(u1)
-	positions.Add(u2)
-
-	orders := order.Set{}
-	orders.AddMove(order.Move{From: gal, To: bud})
-
-	resolved, err := resolver.Resolve(orders, positions)
-
-	is.NoErr(err)
-	is.Equal(u1, resolved.Units["gal"][0])
-	is.Equal(u2, resolved.Units["bud"][0])
+type orderResult struct {
+	order, result string
 }
 
-func TestMainPhaseResolver_Resolve_BouncesTwoUnitsThatMoveToSameTerritory(t *testing.T) {
+func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 	is := is.New(t)
 	graph := mockGraph{
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
 	}
-	resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-	u1 := &board.Unit{Position: gal}
-	u2 := &board.Unit{Position: bud}
+	for _, c := range cases {
+		t.Log(c.description)
+		territories := make([]board.Territory, 0)
+		for _, t := range c.givenMap {
+			territories = append(territories, board.Territory{Abbr: t})
+		}
+		positions := board.NewPositions(territories)
 
-	positions := newPositions()
-	positions.Add(u1)
-	positions.Add(u2)
+		orders := order.Set{}
+		resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-	orders := order.Set{}
-	orders.AddMove(order.Move{From: gal, To: vie})
-	orders.AddMove(order.Move{From: bud, To: vie})
+		units := make([]*board.Unit, 0)
+		for _, c := range c.orders {
+			t.Logf("\t%s", c.order)
+			o, _ := order.Decode(c.order)
+			var t board.Territory
+			switch v := o.(type) {
+			case order.Move:
+				t = v.From
+				orders.AddMove(v)
+			case order.Hold:
+				t = v.Pos
+				orders.AddHold(v)
+			case order.MoveSupport:
+				t = v.By
+				orders.AddMoveSupport(v)
+			case order.MoveConvoy:
+				t = v.By
+				orders.AddMoveConvoy(v)
+			}
+			u := &board.Unit{Position: t}
+			units = append(units, u)
+			positions.Add(u)
+		}
 
-	resolved, err := resolver.Resolve(orders, positions)
+		resolvedPositions, err := resolver.Resolve(orders, positions)
+		is.NoErr(err)
 
-	is.NoErr(err)
-	is.Equal(0, len(resolved.Units["vie"]))
-	is.Equal(u1, resolved.Units["gal"][0])
-	is.Equal(u2, resolved.Units["bud"][0])
+		for i, u := range units {
+			terr := c.orders[i].result
+			is.Equal(u, resolvedPositions.Units[terr][0])
+			is.Equal(1, len(resolvedPositions.Units[terr]))
+		}
+
+		positionTotal := 0
+		for _, positionUnits := range resolvedPositions.Units {
+			positionTotal += len(positionUnits)
+		}
+		is.Equal(positionTotal, len(units))
+	}
 }
 
-func TestMainPhaseResolver_Resolve_BouncesUnitsThatMoveToFromTerritory(t *testing.T) {
-	// bud -> gal, gal -> vie, gal holds
-	is := is.New(t)
-	graph := mockGraph{
-		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-	}
-	resolver := game.MainPhaseResolver{ArmyGraph: graph}
+var (
+	bud = board.Territory{Abbr: "bud", Name: "Budapest"}
+	gal = board.Territory{Abbr: "gal", Name: "Galicia"}
+	vie = board.Territory{Abbr: "vie", Name: "Vienna"}
+	boh = board.Territory{Abbr: "boh", Name: "Bohemia"}
+	lon = board.Territory{Abbr: "lon", Name: "London"}
+)
 
-	u1 := &board.Unit{Position: gal}
-	u2 := &board.Unit{Position: bud}
-	u3 := &board.Unit{Position: vie}
-
-	positions := newPositions()
-	positions.Add(u1)
-	positions.Add(u2)
-	positions.Add(u3)
-
-	orders := order.Set{}
-	orders.AddMove(order.Move{From: gal, To: bud})
-	orders.AddMove(order.Move{From: bud, To: vie})
-
-	resolved, err := resolver.Resolve(orders, positions)
-
-	is.NoErr(err)
-	is.Equal(u1, resolved.Units["gal"][0])
-	is.Equal(1, len(resolved.Units["gal"]))
-	is.Equal(u2, resolved.Units["bud"][0])
-	is.Equal(1, len(resolved.Units["bud"]))
-	is.Equal(u3, resolved.Units["vie"][0])
-	is.Equal(1, len(resolved.Units["vie"]))
+type mockGraph struct {
+	IsNeighbourFunc func(t1, t2 string) (bool, error)
 }
 
-func TestMainPhaseResolver_Resolve_GivenThereIsAConflictAndOneSideHasSupportThenSupportWins(t *testing.T) {
-	// gal -> vie
-	// boh s gal -> vie
-	// bud -> vie
-	is := is.New(t)
-	graph := mockGraph{
-		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-	}
-	resolver := game.MainPhaseResolver{ArmyGraph: graph}
+func (g mockGraph) IsNeighbour(t1, t2 string) (bool, error) {
+	return g.IsNeighbourFunc(t1, t2)
+}
 
-	u1 := &board.Unit{Position: gal}
-	u2 := &board.Unit{Position: bud}
-	u3 := &board.Unit{Position: boh}
+func newPositions() board.Positions {
+	return board.NewPositions([]board.Territory{bud, gal, vie, boh, lon})
 
-	positions := newPositions()
-	positions.Add(u1)
-	positions.Add(u2)
-	positions.Add(u3)
-
-	orders := order.Set{}
-	galToVie := order.Move{From: gal, To: vie}
-
-	orders.AddMove(galToVie)
-	orders.AddMoveSupport(order.MoveSupport{By: boh, Move: galToVie})
-
-	orders.AddMove(order.Move{From: bud, To: vie})
-
-	resolved, err := resolver.Resolve(orders, positions)
-
-	is.NoErr(err)
-	is.Equal(u1, resolved.Units["vie"][0])
-	is.Equal(u2, resolved.Units["bud"][0])
-	is.Equal(u3, resolved.Units["boh"][0])
 }

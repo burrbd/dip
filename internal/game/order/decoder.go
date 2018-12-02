@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	movePrefix = `([A|F])\s([A-Za-z]{3})\s([S|C|H])?`
-	moveSuffix = `([A|F])\s([A-Za-z]{3})\-([A-Za-z]{3})`
-	orderRE    = regexp.MustCompile(`(` + movePrefix + `)?(\s)?(` + moveSuffix + `)?`)
+	orderPrefix = `([A|F])\s([A-Za-z]{3})\s([S|C|H])?`
+	orderMove   = `([A|F])\s([A-Za-z]{3})\-([A-Za-z]{3})`
+	orderRE     = regexp.MustCompile(`(` + orderPrefix + `)?(\s)?(` + orderMove + `)?`)
 )
 
 func Decode(order string) (interface{}, error) {

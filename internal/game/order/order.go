@@ -42,6 +42,14 @@ func (s *Set) AddMoveSupport(sup MoveSupport) {
 	s.MoveSupports = append(s.MoveSupports, &sup)
 }
 
+func (s *Set) AddMoveConvoy(sup MoveConvoy) {
+
+}
+
+func (s *Set) AddHold(hold Hold) {
+
+}
+
 func (s *Set) Strength(u *board.Unit) int {
 	strength := 0
 	for _, support := range s.MoveSupports {

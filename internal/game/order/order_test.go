@@ -5,6 +5,7 @@ import (
 
 	"github.com/burrbd/diplomacy/internal/game/order"
 	"github.com/burrbd/diplomacy/internal/game/order/board"
+
 	"github.com/cheekybits/is"
 )
 
@@ -18,7 +19,6 @@ var (
 
 func newPositions() board.Positions {
 	return board.NewPositions([]board.Territory{bud, gal, vie, boh})
-
 }
 
 func TestSet_Strength(t *testing.T) {

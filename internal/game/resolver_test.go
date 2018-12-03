@@ -15,14 +15,14 @@ import (
 
 var cases = []orderCase{
 	{
-		description: "given a simple move, then the order is resolved",
+		description: "given a unit moves unchallenged, then unit changes territory",
 		givenMap:    []string{"bud", "vie"},
 		orders: []orderResult{
 			{order: "A Bud-Vie", result: "vie"},
 		},
 	},
 	{
-		description: "given two units attack same territory without support, then both units bounce back",
+		description: "given two units attack same territory without support, then neither unit wins territory",
 		givenMap:    []string{"gal", "bud", "vie"},
 		orders: []orderResult{
 			{order: "A Bud-Vie", result: "bud"},
@@ -39,7 +39,7 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given two unit attacks unsupported territory, then supported attack wins",
+		description: "given two units attack an empty territory, then supported attack wins",
 		givenMap:    []string{"gal", "vie", "boh", "bud"},
 		orders: []orderResult{
 			{order: "A Gal-Vie", result: "vie"},
@@ -48,7 +48,7 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given unit holds territory and is not dislodged, then unit remains on territory",
+		description: "given unit holds territory, then unit remains on territory",
 		givenMap:    []string{"vie"},
 		orders: []orderResult{
 			{order: "A Vie H", result: "vie"},

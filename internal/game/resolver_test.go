@@ -111,16 +111,10 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		cases = focused
 	}
 
-	for i, c := range cases {
-		if i != 0 {
-			t.Log("")
-		}
-		t.Log(c.description)
-		t.Log("")
-		t.Log("  | order             | result | retreat |")
-		t.Log("  +--------------------------------------+")
+	for i, orderCase := range cases {
+		logTableHeading(t, orderCase.description, i)
 		territories := make([]board.Territory, 0)
-		for _, territory := range c.givenMap {
+		for _, territory := range orderCase.givenMap {
 			territories = append(territories, board.Territory{Abbr: territory})
 		}
 		positions := board.NewPositions(territories)
@@ -131,8 +125,8 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		expectedRetreats := make([]*board.Unit, 0)
 
 		units := make([]*board.Unit, 0)
-		for _, c := range c.orders {
-			o, _ := order.Decode(c.order)
+		for _, orderResult := range orderCase.orders {
+			o, _ := order.Decode(orderResult.order)
 			var terr board.Territory
 			switch v := o.(type) {
 			case order.Move:
@@ -153,16 +147,16 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 			units = append(units, u)
 			positions.Add(u)
 
-			if c.retreat {
+			if orderResult.retreat {
 				expectedRetreats = append(expectedRetreats, u)
 			}
-			t.Logf("  | %s%s| %s    | %t%s|", c.order, strings.Repeat(" ", 18-len(c.order)), c.result, c.retreat, strings.Repeat(" ", 8-len(fmt.Sprintf("%t", c.retreat))))
+			logTableRow(t, orderResult)
 		}
 
 		resolvedPositions, err := resolver.Resolve(orders, positions)
 		is.NoErr(err)
 
-		for _, order := range c.orders {
+		for _, order := range orderCase.orders {
 			for _, unit := range resolvedPositions.Units[order.result] {
 				is.Equal(order.result, unit.Position.Abbr)
 			}
@@ -209,4 +203,23 @@ func (g mockGraph) IsNeighbour(t1, t2 string) (bool, error) {
 func newPositions() board.Positions {
 	return board.NewPositions([]board.Territory{bud, gal, vie, boh, lon})
 
+}
+
+func logTableHeading(t *testing.T, desc string, i int) {
+	if i != 0 {
+		t.Log("")
+	}
+	t.Log(desc)
+	t.Log("")
+	t.Log("  | order             | result | retreat |")
+	t.Log("  +--------------------------------------+")
+}
+
+func logTableRow(t *testing.T, o orderResult) {
+	t.Logf("  | %s%s| %s    | %t%s|",
+		o.order,
+		strings.Repeat(" ", 18-len(o.order)),
+		o.result,
+		o.retreat,
+		strings.Repeat(" ", 8-len(fmt.Sprintf("%t", o.retreat))))
 }

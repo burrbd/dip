@@ -71,8 +71,10 @@ func (p Positions) Update(u *Unit, next Territory) error {
 	if err := p.Del(u); err != nil {
 		return err
 	}
-	prev := u.Position
-	u.PrevPosition = &prev
+	if u.PrevPosition == nil {
+		prev := u.Position
+		u.PrevPosition = &prev
+	}
 	u.Position = next
 	p.Add(u)
 	return nil
@@ -84,7 +86,7 @@ func (p Positions) ConflictHandler(f func(Territory, []*Unit)) {
 		if err != nil {
 			continue
 		}
-		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return !u.MustRetreat })
+		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.MustRetreat })
 		if len(nonRetreatingUnits) > 1 {
 			f(t, nonRetreatingUnits)
 		}

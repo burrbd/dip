@@ -1,6 +1,8 @@
 package game
 
 import (
+	"sort"
+
 	"github.com/burrbd/diplomacy/internal/game/order"
 	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
@@ -24,22 +26,38 @@ func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positi
 Loop:
 	for {
 		p.ConflictHandler(func(terr board.Territory, units []*board.Unit) {
-			unitStrength, prevUnitStrength := 0, 0
-			for j := len(units) - 1; j >= 0; j-- {
-				unitStrength = s.Strength(units[j])
-				if unitStrength <= prevUnitStrength && units[j].PrevPosition != nil && *units[j].PrevPosition == units[j].Position {
-					units[j].MustRetreat = true
-				}
-				if unitStrength <= prevUnitStrength && units[j].PrevPosition != nil {
-					p.Update(units[j], *units[j].PrevPosition)
-				}
-				prevUnitStrength = unitStrength
+			sort.Sort(s.ByStrength(units))
+			if s.Strength(units[0]) > s.Strength(units[1]) {
+				handleDefeats(units[1:], p)
+			} else {
+				handleBounces(units, p)
 			}
 		})
 		if p.ConflictCount() == 0 {
 			break Loop
 		}
 	}
-
 	return p, nil
+}
+
+func handleDefeats(units []*board.Unit, p board.Positions) {
+	for _, u := range units {
+		if previousPosition(u) {
+			p.Update(u, *u.PrevPosition)
+		} else {
+			u.MustRetreat = true
+		}
+	}
+}
+
+func handleBounces(units []*board.Unit, p board.Positions) {
+	for _, u := range units {
+		if previousPosition(u) {
+			p.Update(u, *u.PrevPosition)
+		}
+	}
+}
+
+func previousPosition(u *board.Unit) bool {
+	return u.PrevPosition != nil && *u.PrevPosition != u.Position
 }

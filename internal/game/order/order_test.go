@@ -1,6 +1,7 @@
 package order_test
 
 import (
+	"sort"
 	"testing"
 
 	"github.com/burrbd/diplomacy/internal/game/order"
@@ -15,6 +16,7 @@ var (
 	vie = board.Territory{Abbr: "vie", Name: "Vienna"}
 	boh = board.Territory{Abbr: "boh", Name: "Bohemia"}
 	lon = board.Territory{Abbr: "lon", Name: "London"}
+	par = board.Territory{Abbr: "par", Name: "Paris"}
 )
 
 func newPositions() board.Positions {
@@ -68,4 +70,33 @@ func TestSet_Strength_WhenSupportIsCutByAttackedUnit(t *testing.T) {
 	orders.AddMoveSupport(order.MoveSupport{Move: move, By: vie})
 	orders.AddMove(order.Move{From: gal, To: vie})
 	is.Equal(1, orders.Strength(&board.Unit{Position: gal, PrevPosition: &bud}))
+}
+
+func TestSet_Strength_WhenUnitIsAlreadyMovedToOrigin_ReturnsZero(t *testing.T) {
+	is := is.New(t)
+	orders := order.Set{}
+	move := order.Move{From: bud, To: gal}
+	orders.AddMove(move)
+	orders.AddMoveSupport(order.MoveSupport{Move: move, By: vie})
+	is.Equal(0, orders.Strength(&board.Unit{Position: bud, PrevPosition: &bud}))
+}
+
+func TestSet_ByStrength(t *testing.T) {
+	// A Bud-Gal
+	// A Vie S Bud-Gal
+	// A Par-Lon
+	is := is.New(t)
+	orders := order.Set{}
+	supportedMove := order.Move{From: bud, To: gal}
+	orders.AddMove(order.Move{From: bud, To: gal})
+	u1 := &board.Unit{Position: gal, PrevPosition: &bud}
+	orders.AddMoveSupport(order.MoveSupport{Move: supportedMove, By: vie})
+	u2 := &board.Unit{Position: vie}
+	orders.AddMove(order.Move{From: par, To: lon})
+	u3 := &board.Unit{Position: lon, PrevPosition: &par}
+
+	units := []*board.Unit{u3, u1, u2}
+	sort.Sort(orders.ByStrength(units))
+
+	is.Equal(u1, units[0])
 }

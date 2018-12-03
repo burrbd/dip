@@ -71,3 +71,24 @@ func (s *Set) supportCut(support MoveSupport) bool {
 	}
 	return false
 }
+
+func (s Set) ByStrength(units []*board.Unit) strengthSorter {
+	return strengthSorter{units, s}
+}
+
+type strengthSorter struct {
+	units  []*board.Unit
+	orders Set
+}
+
+func (s strengthSorter) Len() int {
+	return len(s.units)
+}
+
+func (s strengthSorter) Swap(i, j int) {
+	s.units[i], s.units[j] = s.units[j], s.units[i]
+}
+
+func (s strengthSorter) Less(i, j int) bool {
+	return s.orders.Strength(s.units[i]) > s.orders.Strength(s.units[j])
+}

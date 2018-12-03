@@ -1,6 +1,8 @@
 package game_test
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/burrbd/diplomacy/internal/game"
@@ -37,7 +39,7 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given unit attacks unsupported territory with support, then attacking unit wins",
+		description: "given two unit attacks unsupported territory, then supported attack wins",
 		givenMap:    []string{"gal", "vie", "boh", "bud"},
 		orders: []orderResult{
 			{order: "A Gal-Vie", result: "vie"},
@@ -50,6 +52,15 @@ var cases = []orderCase{
 		givenMap:    []string{"vie"},
 		orders: []orderResult{
 			{order: "A Vie H", result: "vie"},
+		},
+	},
+	{
+		description: "given unit attacks territory and defending territory attacks support, then attacking unit still wins",
+		givenMap:    []string{"gal", "boh", "vie"},
+		orders: []orderResult{
+			{order: "A Gal-Vie", result: "vie"},
+			{order: "A Boh S A Gal-Vie", result: "boh"},
+			{order: "A Vie-Boh", result: "vie", retreat: true},
 		},
 	},
 }
@@ -100,48 +111,65 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		cases = focused
 	}
 
-	for _, c := range cases {
+	for i, c := range cases {
+		if i != 0 {
+			t.Log("")
+		}
 		t.Log(c.description)
+		t.Log("")
+		t.Log("  | order             | result | retreat |")
+		t.Log("  +--------------------------------------+")
 		territories := make([]board.Territory, 0)
-		for _, t := range c.givenMap {
-			territories = append(territories, board.Territory{Abbr: t})
+		for _, territory := range c.givenMap {
+			territories = append(territories, board.Territory{Abbr: territory})
 		}
 		positions := board.NewPositions(territories)
 
 		orders := order.Set{}
 		resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
+		expectedRetreats := make([]*board.Unit, 0)
+
 		units := make([]*board.Unit, 0)
 		for _, c := range c.orders {
-			t.Logf("\t%s", c.order)
 			o, _ := order.Decode(c.order)
-			var t board.Territory
+			var terr board.Territory
 			switch v := o.(type) {
 			case order.Move:
-				t = v.From
+				terr = v.From
 				orders.AddMove(v)
 			case order.Hold:
-				t = v.Pos
+				terr = v.Pos
 				orders.AddHold(v)
 			case order.MoveSupport:
-				t = v.By
+				terr = v.By
 				orders.AddMoveSupport(v)
 			case order.MoveConvoy:
-				t = v.By
+				terr = v.By
 				orders.AddMoveConvoy(v)
 			}
-			u := &board.Unit{Position: t}
+
+			u := &board.Unit{Position: terr}
 			units = append(units, u)
 			positions.Add(u)
+
+			if c.retreat {
+				expectedRetreats = append(expectedRetreats, u)
+			}
+			t.Logf("  | %s%s| %s    | %t%s|", c.order, strings.Repeat(" ", 18-len(c.order)), c.result, c.retreat, strings.Repeat(" ", 8-len(fmt.Sprintf("%t", c.retreat))))
 		}
 
 		resolvedPositions, err := resolver.Resolve(orders, positions)
 		is.NoErr(err)
 
-		for i, u := range units {
-			terr := c.orders[i].result
-			is.Equal(u, resolvedPositions.Units[terr][0])
-			is.Equal(1, len(resolvedPositions.Units[terr]))
+		for _, order := range c.orders {
+			for _, unit := range resolvedPositions.Units[order.result] {
+				is.Equal(order.result, unit.Position.Abbr)
+			}
+		}
+
+		for _, unit := range expectedRetreats {
+			is.True(unit.MustRetreat)
 		}
 
 		positionTotal := 0

@@ -48,6 +48,17 @@ var cases = []orderCase{
 		},
 	},
 	{
+		description: "given two units attack an empty territory, then unit with greatest support wins",
+		givenMap:    []string{"gal", "vie", "boh", "bud", "tyr", "tri"},
+		orders: []orderResult{
+			{order: "A Gal-Vie", result: "vie"},
+			{order: "A Boh S A Gal-Vie", result: "boh"},
+			{order: "A Tri S A Gal-Vie", result: "tri"},
+			{order: "A Bud-Vie", result: "bud"},
+			{order: "A Tyr S A Bud-Vie", result: "tyr"},
+		},
+	},
+	{
 		description: "given unit holds territory, then unit remains on territory",
 		givenMap:    []string{"vie"},
 		orders: []orderResult{

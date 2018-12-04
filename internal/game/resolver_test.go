@@ -74,6 +74,14 @@ var cases = []orderCase{
 			{order: "A Vie-Boh", result: "vie", retreat: true},
 		},
 	},
+	{
+		description: "given two units attack each other, then both units bounce",
+		givenMap:    []string{"vie", "bud"},
+		orders: []*orderResult{
+			{order: "A Vie-Bud", result: "vie"},
+			{order: "A Bud-Vie", result: "bud"},
+		},
+	},
 }
 
 func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T) {

@@ -25,7 +25,7 @@ func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positi
 
 Loop:
 	for {
-		p.ConflictHandler(func(terr board.Territory, units []*board.Unit) {
+		p.ConflictHandler(func(units []*board.Unit) {
 			sort.Sort(s.ByStrength(units))
 			if s.Strength(units[0]) > s.Strength(units[1]) {
 				handleDefeats(units[1:], p)

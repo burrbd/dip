@@ -1,7 +1,6 @@
 package board_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/cheekybits/is"
@@ -109,13 +108,14 @@ func TestPositions_Conflicts(t *testing.T) {
 
 	p.Add(u3)
 
-	p.ConflictHandler(func(terr board.Territory, units []*board.Unit) {
+	p.ConflictHandler(func(units []*board.Unit) {
 		for _, u := range units {
-			u.Country = fmt.Sprintf("hello %s", terr.Abbr)
+			u.MustRetreat = true
 		}
 	})
-	is.Equal("hello t1", u1.Country)
-	is.Equal("hello t1", u2.Country)
+	is.True(u1.MustRetreat)
+	is.True(u2.MustRetreat)
+	is.False(u3.MustRetreat)
 }
 
 func TestPositions_ConflictCount(t *testing.T) {

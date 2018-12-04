@@ -80,15 +80,11 @@ func (p Positions) Update(u *Unit, next Territory) error {
 	return nil
 }
 
-func (p Positions) ConflictHandler(f func(Territory, []*Unit)) {
-	for terr, units := range p.Units {
-		t, err := p.Territory(terr)
-		if err != nil {
-			continue
-		}
+func (p Positions) ConflictHandler(f func([]*Unit)) {
+	for _, units := range p.Units {
 		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.MustRetreat })
 		if len(nonRetreatingUnits) > 1 {
-			f(t, nonRetreatingUnits)
+			f(nonRetreatingUnits)
 		}
 	}
 }
@@ -105,7 +101,7 @@ func unitFilter(units []*Unit, f func(*Unit) bool) []*Unit {
 
 func (p Positions) ConflictCount() int {
 	conflicts := 0
-	p.ConflictHandler(func(terr Territory, units []*Unit) { conflicts++ })
+	p.ConflictHandler(func(_ []*Unit) { conflicts++ })
 	return conflicts
 }
 

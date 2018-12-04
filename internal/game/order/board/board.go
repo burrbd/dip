@@ -41,52 +41,38 @@ type PositionMap interface {
 }
 
 type Positions struct {
-	Conflicts              map[string][]*Unit
+	Units                  map[string][]*Unit
 	CounterAttackConflicts map[string][]*Unit
-	territories            map[string]Territory
 }
 
-func NewPositions(territories []Territory) Positions {
-	territoryMap := make(map[string]Territory)
-	for _, v := range territories {
-		territoryMap[v.Abbr] = v
-	}
+func NewPositions() Positions {
 	return Positions{
-		Conflicts:              make(map[string][]*Unit),
-		CounterAttackConflicts: make(map[string][]*Unit),
-		territories:            territoryMap}
-}
-
-func (p Positions) Territory(abbr string) (Territory, error) {
-	t, ok := p.territories[abbr]
-	if !ok {
-		return Territory{}, fmt.Errorf("unknown territory %s", abbr)
-	}
-	return t, nil
+		Units: make(map[string][]*Unit),
+		CounterAttackConflicts: make(map[string][]*Unit)}
 }
 
 func (p Positions) Add(u *Unit) {
 	terr := u.Position.Abbr
-	if _, ok := p.Conflicts[terr]; !ok {
-		p.Conflicts[terr] = make([]*Unit, 0)
+	if _, ok := p.Units[terr]; !ok {
+		p.Units[terr] = make([]*Unit, 0)
 	}
-	p.Conflicts[terr] = append(p.Conflicts[terr], u)
+	p.Units[terr] = append(p.Units[terr], u)
 }
 
 func (p Positions) Del(u *Unit) error {
 	terr := u.Position.Abbr
-	units, ok := p.Conflicts[terr]
+	units, ok := p.Units[terr]
 	if !ok {
 		return fmt.Errorf("no units in t %s", terr)
 	}
-	for i, unit := range p.Conflicts[terr] {
+	for i, unit := range p.Units[terr] {
 		if u == unit {
 			copy(units[i:], units[i+1:])
 			units[len(units)-1] = nil
 			units = units[:len(units)-1]
 		}
 	}
-	p.Conflicts[terr] = units
+	p.Units[terr] = units
 	return nil
 }
 
@@ -114,7 +100,7 @@ func (p Positions) ConflictHandler(f func([]*Unit)) {
 			f(nonRetreatingUnits)
 		}
 	}
-	for _, units := range p.Conflicts {
+	for _, units := range p.Units {
 		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.MustRetreat })
 		if len(nonRetreatingUnits) > 1 {
 			f(nonRetreatingUnits)

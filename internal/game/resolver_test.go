@@ -16,14 +16,12 @@ import (
 var cases = []orderCase{
 	{
 		description: "given a unit moves unchallenged, then unit changes territory",
-		givenMap:    []string{"bud", "vie"},
 		orders: []*orderResult{
 			{order: "A Bud-Vie", result: "vie"},
 		},
 	},
 	{
 		description: "given two units attack same territory without support, then neither unit wins territory",
-		givenMap:    []string{"gal", "bud", "vie"},
 		orders: []*orderResult{
 			{order: "A Bud-Vie", result: "bud"},
 			{order: "A Gal-Vie", result: "gal"},
@@ -31,7 +29,6 @@ var cases = []orderCase{
 	},
 	{
 		description: "given units attack in circular chain without support, then all attacking units bounce back",
-		givenMap:    []string{"gal", "bud", "vie"},
 		orders: []*orderResult{
 			{order: "A Bud-Gal", result: "bud"},
 			{order: "A Gal-Vie", result: "gal"},
@@ -40,7 +37,6 @@ var cases = []orderCase{
 	},
 	{
 		description: "given two units attack an empty territory, then supported attack wins",
-		givenMap:    []string{"gal", "vie", "boh", "bud"},
 		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
@@ -49,7 +45,6 @@ var cases = []orderCase{
 	},
 	{
 		description: "given two units attack an empty territory, then unit with greatest support wins",
-		givenMap:    []string{"gal", "vie", "boh", "bud", "tyr", "tri"},
 		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
@@ -60,14 +55,12 @@ var cases = []orderCase{
 	},
 	{
 		description: "given unit holds territory, then unit remains on territory",
-		givenMap:    []string{"vie"},
 		orders: []*orderResult{
 			{order: "A Vie H", result: "vie"},
 		},
 	},
 	{
 		description: "given unit attacks territory and defending territory attacks support, then attacking unit still wins",
-		givenMap:    []string{"gal", "boh", "vie"},
 		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
@@ -76,10 +69,39 @@ var cases = []orderCase{
 	},
 	{
 		description: "given two units attack each other (counterattack), then both units bounce",
-		givenMap:    []string{"vie", "bud"},
 		orders: []*orderResult{
 			{order: "A Vie-Bud", result: "vie"},
 			{order: "A Bud-Vie", result: "bud"},
+		},
+	},
+	{
+		description: "given two units attack each other (counterattack), and another attacks one counterattack party," +
+			"then all units bounce",
+		orders: []*orderResult{
+			{order: "A Vie-Bud", result: "vie"},
+			{order: "A Bud-Vie", result: "bud"},
+			{order: "A Boh-Vie", result: "boh"},
+		},
+	},
+	{
+		description: "given two units attack each other (counterattack), and another attacks one counterattack party " +
+			"with support then supported unit wins",
+		orders: []*orderResult{
+			{order: "A Vie-Bud", result: "vie", retreat: true},
+			{order: "A Bud-Vie", result: "bud"},
+			{order: "A Boh-Vie", result: "vie"},
+			{order: "A Tyr S A Boh-Vie", result: "tyr"},
+		},
+	},
+	{
+		description: "given a counterattack and a supported second attack, where one counterattack party has support, " +
+			"then all units bounce",
+		orders: []*orderResult{
+			{order: "A Vie-Bud", result: "vie"},
+			{order: "A Bud-Vie", result: "bud"},
+			{order: "A Sil S A Bud-Vie", result: "sil"},
+			{order: "A Boh-Vie", result: "boh"},
+			{order: "A Tyr S A Boh-Vie", result: "tyr"},
 		},
 	},
 }
@@ -93,7 +115,7 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 
 	unit := &board.Unit{Position: gal}
 
-	positions := newPositions()
+	positions := board.NewPositions()
 	positions.Add(unit)
 
 	orders := order.Set{}
@@ -102,8 +124,8 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 	resolved, err := resolver.Resolve(orders, positions)
 
 	is.NoErr(err)
-	is.Nil(resolved.Conflicts["lon"])
-	is.Equal(unit, resolved.Conflicts["gal"][0])
+	is.Nil(resolved.Units["lon"])
+	is.Equal(unit, resolved.Units["gal"][0])
 }
 
 type orderResult struct {
@@ -133,17 +155,14 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 
 	for i, orderCase := range cases {
 		logTableHeading(t, orderCase.description, i)
-		territories := make([]board.Territory, 0)
-		for _, territory := range orderCase.givenMap {
-			territories = append(territories, board.Territory{Abbr: territory})
-		}
-		positions := board.NewPositions(territories)
 
+		positions := board.NewPositions()
 		orders := order.Set{}
 		resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
 		for _, orderResult := range orderCase.orders {
-			o, _ := order.Decode(orderResult.order)
+			o, err := order.Decode(orderResult.order)
+			is.NoErr(err)
 			var terr board.Territory
 			switch v := o.(type) {
 			case order.Move:
@@ -178,7 +197,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		}
 
 		positionTotal := 0
-		for _, positionUnits := range resolvedPositions.Conflicts {
+		for _, positionUnits := range resolvedPositions.Units {
 			positionTotal += len(positionUnits)
 		}
 		is.Equal(positionTotal, len(orderCase.orders))
@@ -209,11 +228,6 @@ type mockGraph struct {
 
 func (g mockGraph) IsNeighbour(t1, t2 string) (bool, error) {
 	return g.IsNeighbourFunc(t1, t2)
-}
-
-func newPositions() board.Positions {
-	return board.NewPositions([]board.Territory{bud, gal, vie, boh, lon})
-
 }
 
 func logTableHeading(t *testing.T, desc string, i int) {

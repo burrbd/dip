@@ -17,7 +17,7 @@ type MainPhaseResolver struct {
 
 func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positions, error) {
 	for _, m := range s.Moves {
-		unit := p.Conflicts[m.From.Abbr][0]
+		unit := p.Units[m.From.Abbr][0]
 		if ok, _ := r.ArmyGraph.IsNeighbour(m.From.Abbr, m.To.Abbr); ok {
 			p.Update(unit, m.To)
 		}

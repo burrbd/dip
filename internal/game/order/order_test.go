@@ -19,17 +19,13 @@ var (
 	par = board.Territory{Abbr: "par", Name: "Paris"}
 )
 
-func newPositions() board.Positions {
-	return board.NewPositions([]board.Territory{bud, gal, vie, boh})
-}
-
 func TestSet_Strength(t *testing.T) {
 	is := is.New(t)
 	u1 := &board.Unit{Position: gal}
 	u2 := &board.Unit{Position: vie}
 	u3 := &board.Unit{Position: boh}
 
-	positions := newPositions()
+	positions := board.NewPositions()
 	u1.PrevPosition = &bud
 	positions.Add(u1)
 	positions.Add(u2)

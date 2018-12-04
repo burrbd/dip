@@ -17,14 +17,14 @@ var cases = []orderCase{
 	{
 		description: "given a unit moves unchallenged, then unit changes territory",
 		givenMap:    []string{"bud", "vie"},
-		orders: []orderResult{
+		orders: []*orderResult{
 			{order: "A Bud-Vie", result: "vie"},
 		},
 	},
 	{
 		description: "given two units attack same territory without support, then neither unit wins territory",
 		givenMap:    []string{"gal", "bud", "vie"},
-		orders: []orderResult{
+		orders: []*orderResult{
 			{order: "A Bud-Vie", result: "bud"},
 			{order: "A Gal-Vie", result: "gal"},
 		},
@@ -32,7 +32,7 @@ var cases = []orderCase{
 	{
 		description: "given units attack in circular chain without support, then all attacking units bounce back",
 		givenMap:    []string{"gal", "bud", "vie"},
-		orders: []orderResult{
+		orders: []*orderResult{
 			{order: "A Bud-Gal", result: "bud"},
 			{order: "A Gal-Vie", result: "gal"},
 			{order: "A Vie H", result: "vie"},
@@ -41,7 +41,7 @@ var cases = []orderCase{
 	{
 		description: "given two units attack an empty territory, then supported attack wins",
 		givenMap:    []string{"gal", "vie", "boh", "bud"},
-		orders: []orderResult{
+		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
 			{order: "A Bud-Vie", result: "bud"},
@@ -50,7 +50,7 @@ var cases = []orderCase{
 	{
 		description: "given two units attack an empty territory, then unit with greatest support wins",
 		givenMap:    []string{"gal", "vie", "boh", "bud", "tyr", "tri"},
-		orders: []orderResult{
+		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
 			{order: "A Tri S A Gal-Vie", result: "tri"},
@@ -61,14 +61,14 @@ var cases = []orderCase{
 	{
 		description: "given unit holds territory, then unit remains on territory",
 		givenMap:    []string{"vie"},
-		orders: []orderResult{
+		orders: []*orderResult{
 			{order: "A Vie H", result: "vie"},
 		},
 	},
 	{
 		description: "given unit attacks territory and defending territory attacks support, then attacking unit still wins",
 		givenMap:    []string{"gal", "boh", "vie"},
-		orders: []orderResult{
+		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
 			{order: "A Vie-Boh", result: "vie", retreat: true},
@@ -102,12 +102,13 @@ type orderResult struct {
 	order   string
 	result  string
 	retreat bool
+	unit    *board.Unit
 }
 
 type orderCase struct {
 	description string
 	givenMap    []string
-	orders      []orderResult
+	orders      []*orderResult
 	focus       bool
 }
 
@@ -133,9 +134,6 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		orders := order.Set{}
 		resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
-		expectedRetreats := make([]*board.Unit, 0)
-
-		units := make([]*board.Unit, 0)
 		for _, orderResult := range orderCase.orders {
 			o, _ := order.Decode(orderResult.order)
 			var terr board.Territory
@@ -155,33 +153,27 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 			}
 
 			u := &board.Unit{Position: terr}
-			units = append(units, u)
-			positions.Add(u)
 
-			if orderResult.retreat {
-				expectedRetreats = append(expectedRetreats, u)
-			}
-			logTableRow(t, orderResult)
+			positions.Add(u)
+			orderResult.unit = u
+
+			logTableRow(t, *orderResult)
 		}
 
 		resolvedPositions, err := resolver.Resolve(orders, positions)
 		is.NoErr(err)
 
-		for _, order := range orderCase.orders {
-			for _, unit := range resolvedPositions.Units[order.result] {
-				is.Equal(order.result, unit.Position.Abbr)
-			}
-		}
-
-		for _, unit := range expectedRetreats {
-			is.True(unit.MustRetreat)
+		for _, orderResult := range orderCase.orders {
+			is.NotNil(orderResult.unit)
+			is.Equal(orderResult.retreat, orderResult.unit.MustRetreat)
+			is.Equal(orderResult.result, orderResult.unit.Position.Abbr)
 		}
 
 		positionTotal := 0
 		for _, positionUnits := range resolvedPositions.Units {
 			positionTotal += len(positionUnits)
 		}
-		is.Equal(positionTotal, len(units))
+		is.Equal(positionTotal, len(orderCase.orders))
 	}
 }
 

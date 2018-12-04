@@ -26,11 +26,17 @@ func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positi
 Loop:
 	for {
 		p.ConflictHandler(func(units []*board.Unit) {
+			retreat := false
 			sort.Sort(s.ByStrength(units))
 			if s.Strength(units[0]) > s.Strength(units[1]) {
-				handleDefeats(units[1:], p)
-			} else {
-				handleBounces(units, p)
+				units, retreat = units[1:], true
+			}
+			for _, u := range units {
+				if previousPosition(u) {
+					p.Update(u, *u.PrevPosition)
+				} else {
+					u.MustRetreat = retreat
+				}
 			}
 		})
 		if p.ConflictCount() == 0 {
@@ -38,24 +44,6 @@ Loop:
 		}
 	}
 	return p, nil
-}
-
-func handleDefeats(units []*board.Unit, p board.Positions) {
-	for _, u := range units {
-		if previousPosition(u) {
-			p.Update(u, *u.PrevPosition)
-		} else {
-			u.MustRetreat = true
-		}
-	}
-}
-
-func handleBounces(units []*board.Unit, p board.Positions) {
-	for _, u := range units {
-		if previousPosition(u) {
-			p.Update(u, *u.PrevPosition)
-		}
-	}
 }
 
 func previousPosition(u *board.Unit) bool {

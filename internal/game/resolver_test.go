@@ -60,7 +60,8 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given unit attacks territory and defending territory attacks support, then attacking unit still wins",
+		description: "given unit attacks territory and defending territory attacks support, then attacking " +
+			"unit still wins",
 		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
@@ -75,7 +76,7 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given two units attack each other (counterattack), and another attacks one counterattack party," +
+		description: "given a counterattack, and another attacks one counterattack party," +
 			"then all units bounce",
 		orders: []*orderResult{
 			{order: "A Vie-Bud", result: "vie"},
@@ -84,7 +85,7 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given two units attack each other (counterattack), and another attacks one counterattack party " +
+		description: "given a counterattack, and another unit attacks one counterattack party " +
 			"with support then supported unit wins",
 		orders: []*orderResult{
 			{order: "A Vie-Bud", result: "vie", retreat: true},

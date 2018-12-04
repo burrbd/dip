@@ -75,7 +75,7 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given two units attack each other, then both units bounce",
+		description: "given two units attack each other (counterattack), then both units bounce",
 		givenMap:    []string{"vie", "bud"},
 		orders: []*orderResult{
 			{order: "A Vie-Bud", result: "vie"},
@@ -102,8 +102,8 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 	resolved, err := resolver.Resolve(orders, positions)
 
 	is.NoErr(err)
-	is.Nil(resolved.Units["lon"])
-	is.Equal(unit, resolved.Units["gal"][0])
+	is.Nil(resolved.Conflicts["lon"])
+	is.Equal(unit, resolved.Conflicts["gal"][0])
 }
 
 type orderResult struct {
@@ -178,7 +178,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		}
 
 		positionTotal := 0
-		for _, positionUnits := range resolvedPositions.Units {
+		for _, positionUnits := range resolvedPositions.Conflicts {
 			positionTotal += len(positionUnits)
 		}
 		is.Equal(positionTotal, len(orderCase.orders))

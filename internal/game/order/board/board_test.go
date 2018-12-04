@@ -14,8 +14,8 @@ func TestPositions_Add(t *testing.T) {
 	p := board.NewPositions([]board.Territory{terr})
 	u := &board.Unit{Position: terr}
 	p.Add(u)
-	is.NotNil(p.Units["a-territory"])
-	is.Equal(u, p.Units["a-territory"][0])
+	is.NotNil(p.Conflicts["a-territory"])
+	is.Equal(u, p.Conflicts["a-territory"][0])
 }
 
 func TestPositions_Add_ManyUnitsToTerritory(t *testing.T) {
@@ -26,7 +26,7 @@ func TestPositions_Add_ManyUnitsToTerritory(t *testing.T) {
 	u2 := &board.Unit{Position: terr}
 	p.Add(u1)
 	p.Add(u2)
-	is.Equal(2, len(p.Units["a-territory"]))
+	is.Equal(2, len(p.Conflicts["a-territory"]))
 }
 
 func TestPositions_Add_ManyUnitsToDifferentTerritories(t *testing.T) {
@@ -39,8 +39,8 @@ func TestPositions_Add_ManyUnitsToDifferentTerritories(t *testing.T) {
 
 	p.Add(u1)
 	p.Add(u2)
-	is.Equal(u1, p.Units["first"][0])
-	is.Equal(u2, p.Units["second"][0])
+	is.Equal(u1, p.Conflicts["first"][0])
+	is.Equal(u2, p.Conflicts["second"][0])
 }
 
 func TestPositions_Del(t *testing.T) {
@@ -51,7 +51,7 @@ func TestPositions_Del(t *testing.T) {
 	p.Add(u)
 	err := p.Del(u)
 	is.NoErr(err)
-	is.Equal(0, len(p.Units["a-territory"]))
+	is.Equal(0, len(p.Conflicts["a-territory"]))
 }
 
 func TestPositions_Del_ManyInTerritory(t *testing.T) {
@@ -65,8 +65,8 @@ func TestPositions_Del_ManyInTerritory(t *testing.T) {
 	p.Add(u2)
 	err := p.Del(u2)
 	is.NoErr(err)
-	is.NotNil(p.Units["terr"])
-	is.Equal(u1, p.Units["terr"][0])
+	is.NotNil(p.Conflicts["terr"])
+	is.Equal(u1, p.Conflicts["terr"][0])
 }
 
 func TestPositions_Del_NoneInTerritory_ReturnsError(t *testing.T) {
@@ -87,9 +87,9 @@ func TestPositions_Update(t *testing.T) {
 	p.Add(u)
 	err := p.Update(u, next)
 	is.NoErr(err)
-	is.Equal(u, p.Units["next"][0])
-	is.Equal(0, len(p.Units["prev"]))
-	is.Equal(prev, *p.Units["next"][0].PrevPosition)
+	is.Equal(u, p.Conflicts["next"][0])
+	is.Equal(0, len(p.Conflicts["prev"]))
+	is.Equal(prev, *p.Conflicts["next"][0].PrevPosition)
 	is.Equal(next, u.Position)
 	is.Equal(prev, *u.PrevPosition)
 }
@@ -158,4 +158,42 @@ func TestPositions_ConflictCount_WithMustRetreat(t *testing.T) {
 	p.Add(u5)
 
 	is.Equal(1, p.ConflictCount())
+}
+
+func TestPositions_Update_Removes_CounterAttackConflict(t *testing.T) {
+	is := is.New(t)
+	t1 := board.Territory{Abbr: "first"}
+	t2 := board.Territory{Abbr: "second"}
+	p := board.NewPositions([]board.Territory{t1, t2})
+	u := &board.Unit{Position: t1}
+	p.Add(u)
+	err := p.Update(u, t2)
+	is.NoErr(err)
+	err = p.Update(u, t1)
+	is.NoErr(err)
+	is.Equal(0, len(p.CounterAttackConflicts["firstsecond"]))
+}
+
+func TestPositions_Conflicts_CounterAttack_CausesConflict(t *testing.T) {
+	is := is.New(t)
+	t1 := board.Territory{Abbr: "t1"}
+	t2 := board.Territory{Abbr: "t2"}
+	p := board.NewPositions([]board.Territory{t1, t2})
+	u1 := &board.Unit{Position: t1}
+	u2 := &board.Unit{Position: t2}
+
+	p.Add(u1)
+	p.Add(u2)
+	err := p.Update(u1, t2)
+	is.NoErr(err)
+	err = p.Update(u2, t1)
+	is.NoErr(err)
+
+	p.ConflictHandler(func(units []*board.Unit) {
+		for _, u := range units {
+			u.MustRetreat = true
+		}
+	})
+	is.True(u1.MustRetreat)
+	is.True(u2.MustRetreat)
 }

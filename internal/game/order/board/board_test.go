@@ -78,14 +78,14 @@ func TestPositions_Del_NoneInTerritory_ReturnsError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestPositions_Update(t *testing.T) {
+func TestPositions_Move(t *testing.T) {
 	is := is.New(t)
 	prev := board.Territory{Abbr: "prev"}
 	next := board.Territory{Abbr: "next"}
 	p := board.NewPositions()
 	u := &board.Unit{Position: prev}
 	p.Add(u)
-	err := p.Update(u, next)
+	err := p.Move(u, next)
 	is.NoErr(err)
 	is.Equal(u, p.Units["next"][0])
 	is.Equal(0, len(p.Units["prev"]))
@@ -110,12 +110,12 @@ func TestPositions_Conflicts(t *testing.T) {
 
 	p.ConflictHandler(func(units []*board.Unit) {
 		for _, u := range units {
-			u.MustRetreat = true
+			u.Defeated = true
 		}
 	})
-	is.True(u1.MustRetreat)
-	is.True(u2.MustRetreat)
-	is.False(u3.MustRetreat)
+	is.True(u1.Defeated)
+	is.True(u2.Defeated)
+	is.False(u3.Defeated)
 }
 
 func TestPositions_ConflictCount(t *testing.T) {
@@ -148,7 +148,7 @@ func TestPositions_ConflictCount_WithMustRetreat(t *testing.T) {
 	u1 := &board.Unit{Position: t1}
 	u2 := &board.Unit{Position: t1}
 	u3 := &board.Unit{Position: t2}
-	u4 := &board.Unit{Position: t2, MustRetreat: true}
+	u4 := &board.Unit{Position: t2, Defeated: true}
 	u5 := &board.Unit{Position: t3}
 
 	p.Add(u1)
@@ -160,18 +160,18 @@ func TestPositions_ConflictCount_WithMustRetreat(t *testing.T) {
 	is.Equal(1, p.ConflictCount())
 }
 
-func TestPositions_Update_Removes_CounterAttackConflict(t *testing.T) {
+func TestPositions_Bounce_Removes_CounterAttackConflict(t *testing.T) {
 	is := is.New(t)
 	t1 := board.Territory{Abbr: "first"}
 	t2 := board.Territory{Abbr: "second"}
 	p := board.NewPositions()
 	u := &board.Unit{Position: t1}
 	p.Add(u)
-	err := p.Update(u, t2)
+	err := p.Move(u, t2)
 	is.NoErr(err)
-	err = p.Update(u, t1)
+	err = p.Bounce(u, t1)
 	is.NoErr(err)
-	is.Equal(0, len(p.CounterAttackConflicts["firstsecond"]))
+	is.Equal(0, len(p.CounterConflicts["firstsecond"]))
 }
 
 func TestPositions_Conflicts_CounterAttack_CausesConflict(t *testing.T) {
@@ -184,16 +184,16 @@ func TestPositions_Conflicts_CounterAttack_CausesConflict(t *testing.T) {
 
 	p.Add(u1)
 	p.Add(u2)
-	err := p.Update(u1, t2)
+	err := p.Move(u1, t2)
 	is.NoErr(err)
-	err = p.Update(u2, t1)
+	err = p.Move(u2, t1)
 	is.NoErr(err)
 
 	p.ConflictHandler(func(units []*board.Unit) {
 		for _, u := range units {
-			u.MustRetreat = true
+			u.Defeated = true
 		}
 	})
-	is.True(u1.MustRetreat)
-	is.True(u2.MustRetreat)
+	is.True(u1.Defeated)
+	is.True(u2.Defeated)
 }

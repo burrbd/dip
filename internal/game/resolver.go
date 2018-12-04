@@ -19,23 +19,23 @@ func (r MainPhaseResolver) Resolve(s order.Set, p board.Positions) (board.Positi
 	for _, m := range s.Moves {
 		unit := p.Units[m.From.Abbr][0]
 		if ok, _ := r.ArmyGraph.IsNeighbour(m.From.Abbr, m.To.Abbr); ok {
-			p.Update(unit, m.To)
+			p.Move(unit, m.To)
 		}
 	}
 
 Loop:
 	for {
 		p.ConflictHandler(func(units []*board.Unit) {
-			retreat := false
+			defeated := false
 			sort.Sort(s.ByStrength(units))
 			if s.Strength(units[0]) > s.Strength(units[1]) {
-				units, retreat = units[1:], true
+				units, defeated = units[1:], true
 			}
 			for _, u := range units {
-				if previousPosition(u) {
-					p.Update(u, *u.PrevPosition)
+				if u.OriginalPosition() {
+					u.Defeated = defeated
 				} else {
-					u.MustRetreat = retreat
+					p.Bounce(u, *u.PrevPosition)
 				}
 			}
 		})
@@ -44,8 +44,4 @@ Loop:
 		}
 	}
 	return p, nil
-}
-
-func previousPosition(u *board.Unit) bool {
-	return u.PrevPosition != nil && *u.PrevPosition != u.Position
 }

@@ -31,24 +31,30 @@ type Unit struct {
 	Type         UnitType
 	Position     Territory
 	PrevPosition *Territory
-	MustRetreat  bool
+	Defeated     bool
 }
 
-type PositionMap interface {
-	Get(string) *Unit
-	Add(string, *Unit) error
-	Del(string) error
+func (u *Unit) SetNewPosition(terr Territory) {
+	if u.PrevPosition == nil {
+		prev := u.Position
+		u.PrevPosition = &prev
+	}
+	u.Position = terr
+}
+
+func (u *Unit) OriginalPosition() bool {
+	return u.PrevPosition == nil || *u.PrevPosition == u.Position
 }
 
 type Positions struct {
-	Units                  map[string][]*Unit
-	CounterAttackConflicts map[string][]*Unit
+	Units            map[string][]*Unit
+	CounterConflicts map[string][]*Unit
 }
 
 func NewPositions() Positions {
 	return Positions{
-		Units: make(map[string][]*Unit),
-		CounterAttackConflicts: make(map[string][]*Unit)}
+		Units:            make(map[string][]*Unit),
+		CounterConflicts: make(map[string][]*Unit)}
 }
 
 func (p Positions) Add(u *Unit) {
@@ -67,41 +73,47 @@ func (p Positions) Del(u *Unit) error {
 	}
 	for i, unit := range p.Units[terr] {
 		if u == unit {
-			copy(units[i:], units[i+1:])
-			units[len(units)-1] = nil
-			units = units[:len(units)-1]
+			units = removeIndex(i, units)
 		}
 	}
 	p.Units[terr] = units
 	return nil
 }
 
-func (p Positions) Update(u *Unit, next Territory) error {
+func (p Positions) Move(u *Unit, next Territory) error {
+	if err := p.update(u, next); err != nil {
+		return err
+	}
+	p.addCounterConflict(u)
+	return nil
+}
+
+func (p Positions) Bounce(u *Unit, next Territory) error {
+	p.delCounterConflict(u)
+	if err := p.update(u, next); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p Positions) update(u *Unit, next Territory) error {
 	if err := p.Del(u); err != nil {
 		return err
 	}
-	if u.PrevPosition == nil {
-		prev := u.Position
-		u.PrevPosition = &prev
-		u.Position = next
-		p.addCounterattack(u)
-	} else {
-		p.removeCounterattack(u)
-		u.Position = next
-	}
+	u.SetNewPosition(next)
 	p.Add(u)
 	return nil
 }
 
 func (p Positions) ConflictHandler(f func([]*Unit)) {
-	for _, units := range p.CounterAttackConflicts {
-		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.MustRetreat })
+	for _, units := range p.CounterConflicts {
+		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.Defeated })
 		if len(nonRetreatingUnits) == 2 {
 			f(nonRetreatingUnits)
 		}
 	}
 	for _, units := range p.Units {
-		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.MustRetreat })
+		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.Defeated })
 		if len(nonRetreatingUnits) > 1 {
 			f(nonRetreatingUnits)
 		}
@@ -124,29 +136,32 @@ func unitFilter(units []*Unit, f func(*Unit) bool) []*Unit {
 	return filtered
 }
 
-func (p Positions) addCounterattack(u *Unit) {
-	key := counterAttackKey(*u.PrevPosition, u.Position)
-	if _, ok := p.CounterAttackConflicts[key]; !ok {
-		p.CounterAttackConflicts[key] = make([]*Unit, 0, 2)
+func (p Positions) addCounterConflict(u *Unit) {
+	key := pairKey(*u.PrevPosition, u.Position)
+	if _, ok := p.CounterConflicts[key]; !ok {
+		p.CounterConflicts[key] = make([]*Unit, 0, 2)
 	}
-	p.CounterAttackConflicts[key] = append(p.CounterAttackConflicts[key], u)
+	p.CounterConflicts[key] = append(p.CounterConflicts[key], u)
 }
 
-func (p Positions) removeCounterattack(u *Unit) {
-	key := counterAttackKey(*u.PrevPosition, u.Position)
-	units := p.CounterAttackConflicts[key]
+func (p Positions) delCounterConflict(u *Unit) {
+	key := pairKey(*u.PrevPosition, u.Position)
+	units := p.CounterConflicts[key]
 	for i, cu := range units {
 		if u == cu {
-			copy(units[i:], units[i+1:])
-			units[len(units)-1] = nil
-			units = units[:len(units)-1]
+			p.CounterConflicts[key] = removeIndex(i, units)
 		}
 	}
-	p.CounterAttackConflicts[key] = units
 }
 
-func counterAttackKey(t1, t2 Territory) string {
+func pairKey(t1, t2 Territory) string {
 	s := []string{t1.Abbr, t2.Abbr}
 	sort.Strings(s)
 	return strings.Join(s, "")
+}
+
+func removeIndex(i int, units []*Unit) []*Unit {
+	copy(units[i:], units[i+1:])
+	units[len(units)-1] = nil
+	return units[:len(units)-1]
 }

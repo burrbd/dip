@@ -65,7 +65,7 @@ var cases = []orderCase{
 		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
-			{order: "A Vie-Boh", result: "vie", retreat: true},
+			{order: "A Vie-Boh", result: "vie", defeated: true},
 		},
 	},
 	{
@@ -88,7 +88,7 @@ var cases = []orderCase{
 		description: "given a counterattack, and another unit attacks one counterattack party " +
 			"with support then supported unit wins",
 		orders: []*orderResult{
-			{order: "A Vie-Bud", result: "vie", retreat: true},
+			{order: "A Vie-Bud", result: "vie", defeated: true},
 			{order: "A Bud-Vie", result: "bud"},
 			{order: "A Boh-Vie", result: "vie"},
 			{order: "A Tyr S A Boh-Vie", result: "tyr"},
@@ -130,10 +130,10 @@ func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T
 }
 
 type orderResult struct {
-	order   string
-	result  string
-	retreat bool
-	unit    *board.Unit
+	order    string
+	result   string
+	defeated bool
+	unit     *board.Unit
 }
 
 type orderCase struct {
@@ -193,7 +193,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 
 		for _, orderResult := range orderCase.orders {
 			is.NotNil(orderResult.unit)
-			is.Equal(orderResult.retreat, orderResult.unit.MustRetreat)
+			is.Equal(orderResult.defeated, orderResult.unit.Defeated)
 			is.Equal(orderResult.result, orderResult.unit.Position.Abbr)
 		}
 
@@ -237,8 +237,8 @@ func logTableHeading(t *testing.T, desc string, i int) {
 	}
 	t.Log(desc)
 	t.Log("")
-	t.Log("  | order             | result | retreat |")
-	t.Log("  +--------------------------------------+")
+	t.Log("  | order             | result | defeated |")
+	t.Log("  +---------------------------------------+")
 }
 
 func logTableRow(t *testing.T, o orderResult) {
@@ -246,6 +246,6 @@ func logTableRow(t *testing.T, o orderResult) {
 		o.order,
 		strings.Repeat(" ", 18-len(o.order)),
 		o.result,
-		o.retreat,
-		strings.Repeat(" ", 8-len(fmt.Sprintf("%t", o.retreat))))
+		o.defeated,
+		strings.Repeat(" ", 9-len(fmt.Sprintf("%t", o.defeated))))
 }

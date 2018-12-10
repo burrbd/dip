@@ -7,12 +7,12 @@ import (
 
 type RetreatPhaseResolver struct{}
 
-func (r RetreatPhaseResolver) Resolve(set order.Set, positions board.Positions) (board.Positions, error) {
-	return board.Positions{}, nil
+func (r RetreatPhaseResolver) Resolve(set order.Set, positions board.PositionMap) (board.PositionMap, error) {
+	return board.PositionMap{}, nil
 }
 
 type BuildPhaseResolver struct{}
 
-func (r BuildPhaseResolver) Resolve(set order.Set, positions board.Positions) (board.Positions, error) {
-	return board.Positions{}, nil
+func (r BuildPhaseResolver) Resolve(set order.Set, positions board.PositionMap) (board.PositionMap, error) {
+	return board.PositionMap{}, nil
 }

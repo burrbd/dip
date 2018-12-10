@@ -107,28 +107,6 @@ var cases = []orderCase{
 	},
 }
 
-func TestMainPhaseResolver_Resolve_OnlyMovesToNeighbouringTerritory(t *testing.T) {
-	is := is.New(t)
-	graph := mockGraph{
-		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return false, nil },
-	}
-	resolver := game.MainPhaseResolver{ArmyGraph: graph}
-
-	unit := &board.Unit{Position: gal}
-
-	positions := board.NewPositions()
-	positions.Add(unit)
-
-	orders := order.Set{}
-	orders.AddMove(order.Move{From: gal, To: lon})
-
-	resolved, err := resolver.Resolve(orders, positions)
-
-	is.NoErr(err)
-	is.Nil(resolved.Units["lon"])
-	is.Equal(unit, resolved.Units["gal"][0])
-}
-
 type orderResult struct {
 	order    string
 	result   string
@@ -157,9 +135,8 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 	for i, orderCase := range cases {
 		logTableHeading(t, orderCase.description, i)
 
-		positions := board.NewPositions()
+		positions := board.NewPositionMap()
 		orders := order.Set{}
-		resolver := game.MainPhaseResolver{ArmyGraph: graph}
 
 		for _, orderResult := range orderCase.orders {
 			o, err := order.Decode(orderResult.order)
@@ -188,7 +165,11 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 			logTableRow(t, *orderResult)
 		}
 
-		resolvedPositions, err := resolver.Resolve(orders, positions)
+		orderHandler := game.OrderHandler{ArmyGraph: graph}
+		orderHandler.Handle(orders, positions)
+
+		resolver := game.MainPhaseResolver{}
+		resolvedPositions, err := resolver.Resolve(positions)
 		is.NoErr(err)
 
 		for _, orderResult := range orderCase.orders {

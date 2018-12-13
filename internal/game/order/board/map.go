@@ -5,26 +5,41 @@ import (
 	"strings"
 )
 
+type PositionManager interface {
+	Units() []*Unit
+	Move(unit *Unit, territory Territory)
+	Bounce(unit *Unit, territory Territory)
+	SetDefeated(unit *Unit, defeated bool)
+	Conflict() []*Unit
+}
+
 type PositionMap struct {
-	Units            map[string][]*Unit
+	conflicts        map[string][]*Unit
 	CounterConflicts map[string][]*Unit
 }
 
-func NewPositionMap() PositionMap {
+func NewPositionMap(units []*Unit) PositionMap {
+	conflicts := make(map[string][]*Unit)
+	for _, u := range units {
+		if _, ok := conflicts[u.Position.Abbr]; !ok {
+			conflicts[u.Position.Abbr] = make([]*Unit, 0)
+		}
+		conflicts[u.Position.Abbr] = append(conflicts[u.Position.Abbr], u)
+	}
 	return PositionMap{
-		Units:            make(map[string][]*Unit),
+		conflicts:        conflicts,
 		CounterConflicts: make(map[string][]*Unit)}
 }
 
-func (m PositionMap) AllUnits() []*Unit {
+func (m PositionMap) Units() []*Unit {
 	ret := make([]*Unit, 0)
-	for _, units := range m.Units {
+	for _, units := range m.conflicts {
 		ret = append(ret, units...)
 	}
 	return ret
 }
 
-func (m PositionMap) GetConflict() []*Unit {
+func (m PositionMap) Conflict() []*Unit {
 	for _, units := range m.CounterConflicts {
 		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.Defeated })
 		if len(nonRetreatingUnits) == 2 {
@@ -33,7 +48,7 @@ func (m PositionMap) GetConflict() []*Unit {
 			return unitsCopy
 		}
 	}
-	for _, units := range m.Units {
+	for _, units := range m.conflicts {
 		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.Defeated })
 		conflicts := len(nonRetreatingUnits)
 		if conflicts > 1 {
@@ -43,28 +58,6 @@ func (m PositionMap) GetConflict() []*Unit {
 		}
 	}
 	return nil
-}
-
-func (m PositionMap) Add(u *Unit) {
-	terr := u.Position.Abbr
-	if _, ok := m.Units[terr]; !ok {
-		m.Units[terr] = make([]*Unit, 0)
-	}
-	m.Units[terr] = append(m.Units[terr], u)
-}
-
-func (m PositionMap) Del(u *Unit) {
-	terr := u.Position.Abbr
-	units, ok := m.Units[terr]
-	if !ok {
-		return
-	}
-	for i, unit := range m.Units[terr] {
-		if u == unit {
-			units = removeIndex(i, units)
-		}
-	}
-	m.Units[terr] = units
 }
 
 func (m PositionMap) Move(u *Unit, next Territory) {
@@ -77,10 +70,36 @@ func (m PositionMap) Bounce(u *Unit, next Territory) {
 	m.update(u, next)
 }
 
+func (m PositionMap) SetDefeated(unit *Unit, defeated bool) {
+	unit.Defeated = defeated
+}
+
+func (m PositionMap) add(u *Unit) {
+	terr := u.Position.Abbr
+	if _, ok := m.conflicts[terr]; !ok {
+		m.conflicts[terr] = make([]*Unit, 0)
+	}
+	m.conflicts[terr] = append(m.conflicts[terr], u)
+}
+
+func (m PositionMap) del(u *Unit) {
+	terr := u.Position.Abbr
+	units, ok := m.conflicts[terr]
+	if !ok {
+		return
+	}
+	for i, unit := range m.conflicts[terr] {
+		if u == unit {
+			units = removeIndex(i, units)
+		}
+	}
+	m.conflicts[terr] = units
+}
+
 func (m PositionMap) update(u *Unit, next Territory) {
-	m.Del(u)
+	m.del(u)
 	u.SetNewPosition(next)
-	m.Add(u)
+	m.add(u)
 }
 
 func unitFilter(units []*Unit, f func(*Unit) bool) []*Unit {

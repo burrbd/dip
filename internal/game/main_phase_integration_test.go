@@ -5,10 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/burrbd/diplomacy/internal/game"
-
 	"github.com/cheekybits/is"
 
+	"github.com/burrbd/diplomacy/internal/game"
 	"github.com/burrbd/diplomacy/internal/game/order"
 	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
@@ -135,8 +134,8 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 	for i, orderCase := range cases {
 		logTableHeading(t, orderCase.description, i)
 
-		positions := board.NewPositionMap()
 		orders := order.Set{}
+		units := make([]*board.Unit, 0)
 
 		for _, orderResult := range orderCase.orders {
 			o, err := order.Decode(orderResult.order)
@@ -158,18 +157,18 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 			}
 
 			u := &board.Unit{Position: terr}
-
-			positions.Add(u)
+			units = append(units, u)
 			orderResult.unit = u
 
 			logTableRow(t, *orderResult)
 		}
 
-		orderHandler := game.OrderHandler{ArmyGraph: graph}
-		orderHandler.Handle(orders, positions)
+		positions := board.NewPositionMap(units)
 
-		resolver := game.MainPhaseResolver{}
-		resolvedPositions, err := resolver.Resolve(positions)
+		orderHandler := game.MainPhaseHandler{ArmyGraph: graph}
+		orderHandler.ApplyOrders(orders, positions)
+
+		err := orderHandler.ResolveOrderConflicts(positions)
 		is.NoErr(err)
 
 		for _, orderResult := range orderCase.orders {
@@ -178,11 +177,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 			is.Equal(orderResult.result, orderResult.unit.Position.Abbr)
 		}
 
-		positionTotal := 0
-		for _, positionUnits := range resolvedPositions.Units {
-			positionTotal += len(positionUnits)
-		}
-		is.Equal(positionTotal, len(orderCase.orders))
+		is.Equal(len(orderCase.orders), len(positions.Units()))
 	}
 }
 

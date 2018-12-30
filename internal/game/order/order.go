@@ -4,11 +4,19 @@ import (
 	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
 
+type UnitMatcher interface {
+	Match(manager board.PositionManager) *board.Unit
+}
+
 type Move struct {
 	Country  string
 	UnitType board.UnitType
 	From, To board.Territory
 	Strength int
+}
+
+func (m Move) Match(manager board.PositionManager) *board.Unit {
+	return nil
 }
 
 type MoveSupport struct {

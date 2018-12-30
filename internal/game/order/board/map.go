@@ -7,28 +7,28 @@ import (
 
 type PositionManager interface {
 	Units() []*Unit
-	Move(unit *Unit, territory Territory)
-	Bounce(unit *Unit, territory Territory)
-	SetDefeated(unit *Unit, defeated bool)
+	Move(unit *Unit, territory Territory, strength int)
+	Bounce(unit *Unit)
+	SetDefeated(unit *Unit)
 	Conflict() []*Unit
 }
 
 type PositionMap struct {
 	conflicts        map[string][]*Unit
-	CounterConflicts map[string][]*Unit
+	counterConflicts map[string][]*Unit
 }
 
 func NewPositionMap(units []*Unit) PositionMap {
 	conflicts := make(map[string][]*Unit)
 	for _, u := range units {
-		if _, ok := conflicts[u.Position.Abbr]; !ok {
-			conflicts[u.Position.Abbr] = make([]*Unit, 0)
+		if _, ok := conflicts[u.Position().Territory.Abbr]; !ok {
+			conflicts[u.Position().Territory.Abbr] = make([]*Unit, 0)
 		}
-		conflicts[u.Position.Abbr] = append(conflicts[u.Position.Abbr], u)
+		conflicts[u.Position().Territory.Abbr] = append(conflicts[u.Position().Territory.Abbr], u)
 	}
 	return PositionMap{
 		conflicts:        conflicts,
-		CounterConflicts: make(map[string][]*Unit)}
+		counterConflicts: make(map[string][]*Unit)}
 }
 
 func (m PositionMap) Units() []*Unit {
@@ -40,8 +40,8 @@ func (m PositionMap) Units() []*Unit {
 }
 
 func (m PositionMap) Conflict() []*Unit {
-	for _, units := range m.CounterConflicts {
-		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.Defeated })
+	for _, units := range m.counterConflicts {
+		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return !u.Defeated() })
 		if len(nonRetreatingUnits) == 2 {
 			unitsCopy := make([]*Unit, 2)
 			copy(unitsCopy, units)
@@ -49,7 +49,7 @@ func (m PositionMap) Conflict() []*Unit {
 		}
 	}
 	for _, units := range m.conflicts {
-		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return u != nil && !u.Defeated })
+		nonRetreatingUnits := unitFilter(units, func(u *Unit) bool { return !u.Defeated() })
 		conflicts := len(nonRetreatingUnits)
 		if conflicts > 1 {
 			unitsCopy := make([]*Unit, conflicts)
@@ -60,22 +60,34 @@ func (m PositionMap) Conflict() []*Unit {
 	return nil
 }
 
-func (m PositionMap) Move(u *Unit, next Territory) {
-	m.update(u, next)
+func (m PositionMap) Move(u *Unit, next Territory, strength int) {
+	m.del(u)
+	u.PhaseHistory = append(u.PhaseHistory, Position{
+		Territory: next, Strength: strength, Cause: Moved})
+	m.add(u)
 	m.addCounterConflict(u)
 }
 
-func (m PositionMap) Bounce(u *Unit, next Territory) {
+func (m PositionMap) Bounce(u *Unit) {
+	prev := u.PrevPosition()
+	if prev == nil {
+		return
+	}
+	next := prev.Territory
 	m.delCounterConflict(u)
-	m.update(u, next)
+	m.del(u)
+	u.PhaseHistory = append(u.PhaseHistory, Position{
+		Territory: next, Strength: 0, Cause: Bounced})
+	m.add(u)
 }
 
-func (m PositionMap) SetDefeated(unit *Unit, defeated bool) {
-	unit.Defeated = defeated
+func (m PositionMap) SetDefeated(u *Unit) {
+	u.PhaseHistory = append(u.PhaseHistory, Position{
+		Territory: u.Position().Territory, Cause: Defeated})
 }
 
 func (m PositionMap) add(u *Unit) {
-	terr := u.Position.Abbr
+	terr := u.Position().Territory.Abbr
 	if _, ok := m.conflicts[terr]; !ok {
 		m.conflicts[terr] = make([]*Unit, 0)
 	}
@@ -83,23 +95,17 @@ func (m PositionMap) add(u *Unit) {
 }
 
 func (m PositionMap) del(u *Unit) {
-	terr := u.Position.Abbr
+	terr := u.Position().Territory.Abbr
 	units, ok := m.conflicts[terr]
 	if !ok {
 		return
 	}
-	for i, unit := range m.conflicts[terr] {
+	for i, unit := range units {
 		if u == unit {
 			units = removeIndex(i, units)
 		}
 	}
 	m.conflicts[terr] = units
-}
-
-func (m PositionMap) update(u *Unit, next Territory) {
-	m.del(u)
-	u.SetNewPosition(next)
-	m.add(u)
 }
 
 func unitFilter(units []*Unit, f func(*Unit) bool) []*Unit {
@@ -113,22 +119,25 @@ func unitFilter(units []*Unit, f func(*Unit) bool) []*Unit {
 }
 
 func (m PositionMap) addCounterConflict(u *Unit) {
-	key := pairKey(*u.PrevPosition, u.Position)
-	if _, ok := m.CounterConflicts[key]; !ok {
-		m.CounterConflicts[key] = make([]*Unit, 0, 2)
+	if u.Position().Cause != Moved || u.PrevPosition() == nil {
+		return
 	}
-	m.CounterConflicts[key] = append(m.CounterConflicts[key], u)
+	key := pairKey(u.Position().Territory, u.PrevPosition().Territory)
+	if _, ok := m.counterConflicts[key]; !ok {
+		m.counterConflicts[key] = make([]*Unit, 0, 2)
+	}
+	m.counterConflicts[key] = append(m.counterConflicts[key], u)
 }
 
 func (m PositionMap) delCounterConflict(u *Unit) {
-	if u.PrevPosition == nil {
+	if u.PrevPosition() == nil {
 		return
 	}
-	key := pairKey(*u.PrevPosition, u.Position)
-	units := m.CounterConflicts[key]
+	key := pairKey(u.PrevPosition().Territory, u.Position().Territory)
+	units := m.counterConflicts[key]
 	for i, cu := range units {
 		if u == cu {
-			m.CounterConflicts[key] = removeIndex(i, units)
+			m.counterConflicts[key] = removeIndex(i, units)
 		}
 	}
 }

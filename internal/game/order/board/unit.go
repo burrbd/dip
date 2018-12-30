@@ -23,25 +23,58 @@ func (t Territory) ID() string {
 type Unit struct {
 	Country      string
 	Type         UnitType
-	Position     Territory
-	PrevPosition *Territory
-	Strength     int
-	Defeated     bool
+	Territory    Territory
+	PhaseHistory []Position
 }
 
-func (u *Unit) SetNewPosition(terr Territory) {
-	if u.PrevPosition == nil {
-		prev := u.Position
-		u.PrevPosition = &prev
-	}
-	u.Position = terr
+type Position struct {
+	Territory Territory
+	Strength  int
+	Cause     PositionEvent
 }
+
+type PositionEvent int
+
+const (
+	Originated PositionEvent = iota
+	Moved
+	Bounced
+	Defeated
+)
 
 func (u *Unit) AtOrigin() bool {
-	return u.PrevPosition == nil || *u.PrevPosition == u.Position
+	return u.Position().Territory == u.Territory
 }
 
-func UnitsByStrength(units []*Unit) strengthSorter {
+func (u *Unit) Defeated() bool {
+	for _, position := range u.PhaseHistory {
+		if position.Cause == Defeated {
+			return true
+		}
+	}
+	return false
+}
+
+func (u *Unit) Position() Position {
+	n := len(u.PhaseHistory)
+	if n > 0 {
+		return u.PhaseHistory[n-1]
+	}
+	position := Position{Territory: u.Territory, Strength: 0, Cause: Originated}
+	u.PhaseHistory = make([]Position, 0)
+	u.PhaseHistory = append(u.PhaseHistory, position)
+	return position
+}
+
+func (u *Unit) PrevPosition() *Position {
+	n := len(u.PhaseHistory)
+	if n > 1 {
+		return &u.PhaseHistory[n-2]
+	}
+	return nil
+}
+
+func UnitPositionsByStrength(units []*Unit) strengthSorter {
 	return strengthSorter{units}
 }
 
@@ -58,5 +91,5 @@ func (s strengthSorter) Swap(i, j int) {
 }
 
 func (s strengthSorter) Less(i, j int) bool {
-	return s.units[i].Strength > s.units[j].Strength
+	return s.units[i].Position().Strength > s.units[j].Position().Strength
 }

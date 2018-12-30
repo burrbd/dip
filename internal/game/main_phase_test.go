@@ -27,23 +27,23 @@ type call struct {
 var calls = make([]call, 0)
 
 type mockPositionMap struct {
-	MoveFunc        func(unit *board.Unit, territory board.Territory)
-	BounceFunc      func(unit *board.Unit, territory board.Territory)
-	SetDefeatedFunc func(unit *board.Unit, defeated bool)
+	MoveFunc        func(unit *board.Unit, territory board.Territory, strength int)
+	BounceFunc      func(unit *board.Unit)
+	SetDefeatedFunc func(unit *board.Unit)
 	UnitsFunc       func() []*board.Unit
 	ConflictFunc    func() []*board.Unit
 }
 
-func (m mockPositionMap) Move(unit *board.Unit, territory board.Territory) {
-	m.MoveFunc(unit, territory)
+func (m mockPositionMap) Move(unit *board.Unit, territory board.Territory, strength int) {
+	m.MoveFunc(unit, territory, strength)
 }
 
-func (m mockPositionMap) Bounce(unit *board.Unit, territory board.Territory) {
-	m.BounceFunc(unit, territory)
+func (m mockPositionMap) Bounce(unit *board.Unit) {
+	m.BounceFunc(unit)
 }
 
-func (m mockPositionMap) SetDefeated(unit *board.Unit, defeated bool) {
-	m.SetDefeatedFunc(unit, defeated)
+func (m mockPositionMap) SetDefeated(unit *board.Unit) {
+	m.SetDefeatedFunc(unit)
 }
 
 func (m mockPositionMap) Units() []*board.Unit {
@@ -57,7 +57,7 @@ func (m mockPositionMap) Conflict() []*board.Unit {
 func TestOrderHandler_HandleMove(t *testing.T) {
 	is := is.New(t)
 
-	handler := game.MainPhaseHandler{
+	h := game.MainPhaseHandler{
 
 		ArmyGraph: mockGraph{
 			IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
@@ -70,18 +70,18 @@ func TestOrderHandler_HandleMove(t *testing.T) {
 	is.NoErr(err)
 	mm1 := m1.(order.Move)
 	set.AddMove(mm1)
-	u1 := &board.Unit{Position: mm1.From}
+	u1 := &board.Unit{Territory: mm1.From}
 
 	act := call{}
 	positions := &mockPositionMap{
-		MoveFunc: func(unit *board.Unit, territory board.Territory) {
+		MoveFunc: func(unit *board.Unit, territory board.Territory, strength int) {
 			act.unit = unit
 			act.terr = territory
 		},
 		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1} },
 	}
 
-	handler.ApplyOrders(set, positions)
+	h.ApplyOrders(set, positions)
 	is.Equal(u1, act.unit)
 	is.Equal(mm1.To, act.terr)
 }
@@ -91,7 +91,7 @@ func TestOrderHandler_Handle_NotNeighbor_DoesNotCallMove(t *testing.T) {
 
 	var isNeighbourCalled bool
 
-	handler := game.MainPhaseHandler{
+	h := game.MainPhaseHandler{
 		ArmyGraph: mockGraph{
 			IsNeighbourFunc: func(t1, t2 string) (bool, error) { isNeighbourCalled = true; return false, nil },
 		},
@@ -104,14 +104,14 @@ func TestOrderHandler_Handle_NotNeighbor_DoesNotCallMove(t *testing.T) {
 	mm1 := m1.(order.Move)
 	set.AddMove(mm1)
 
-	u1 := &board.Unit{Position: mm1.From}
+	u1 := &board.Unit{Territory: mm1.From}
 
 	positions := &mockPositionMap{
-		MoveFunc:  func(unit *board.Unit, territory board.Territory) { is.Fail("unexpected Move() call") },
+		MoveFunc:  func(unit *board.Unit, territory board.Territory, strength int) { is.Fail("unexpected Move() call") },
 		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1} },
 	}
 
-	handler.ApplyOrders(set, positions)
+	h.ApplyOrders(set, positions)
 
 	is.True(isNeighbourCalled)
 }
@@ -119,9 +119,9 @@ func TestOrderHandler_Handle_NotNeighbor_DoesNotCallMove(t *testing.T) {
 func TestSet_Strength(t *testing.T) {
 	is := is.New(t)
 
-	u1 := &board.Unit{Position: bud}
-	u2 := &board.Unit{Position: vie}
-	u3 := &board.Unit{Position: boh}
+	u1 := &board.Unit{Territory: bud}
+	u2 := &board.Unit{Territory: vie}
+	u3 := &board.Unit{Territory: boh}
 
 	orders := order.Set{}
 	m := order.Move{From: bud, To: gal}
@@ -130,12 +130,11 @@ func TestSet_Strength(t *testing.T) {
 	orders.AddMoveSupport(order.MoveSupport{Move: m, By: boh})
 
 	positionMap := &mockPositionMap{
-		MoveFunc:  func(unit *board.Unit, territory board.Territory) {},
+		MoveFunc:  func(unit *board.Unit, territory board.Territory, strength int) { is.Equal(2, strength) },
 		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1, u2, u3} },
 	}
 
 	handler.ApplyOrders(orders, positionMap)
-	is.Equal(2, u1.Strength)
 }
 
 func TestSet_Strength_WhenSupportIsCut(t *testing.T) {
@@ -144,22 +143,22 @@ func TestSet_Strength_WhenSupportIsCut(t *testing.T) {
 	// boh -> vie
 	is := is.New(t)
 	orders := order.Set{}
-	u1 := &board.Unit{Position: bud}
-	u2 := &board.Unit{Position: vie}
-	u3 := &board.Unit{Position: boh}
+	u1 := &board.Unit{Territory: bud}
+	u2 := &board.Unit{Territory: vie}
+	u3 := &board.Unit{Territory: boh}
 	move := order.Move{From: bud, To: gal}
 	orders.AddMove(move)
 	orders.AddMoveSupport(order.MoveSupport{Move: move, By: vie})
 	orders.AddMove(order.Move{From: boh, To: vie})
 
 	positions := &mockPositionMap{
-		MoveFunc:  func(unit *board.Unit, territory board.Territory) {},
+		MoveFunc:  func(unit *board.Unit, territory board.Territory, strength int) {},
 		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1, u2, u3} },
 	}
 
 	handler.ApplyOrders(orders, positions)
 
-	is.Equal(0, u1.Strength)
+	is.Equal(0, u1.Position().Strength)
 }
 
 func TestSet_Strength_WhenSupportIsCutByAttackedUnit(t *testing.T) {
@@ -169,9 +168,9 @@ func TestSet_Strength_WhenSupportIsCutByAttackedUnit(t *testing.T) {
 
 	// gal can't cut support because the support is for attack against gal
 	is := is.New(t)
-	u1 := &board.Unit{Position: bud}
-	u2 := &board.Unit{Position: vie}
-	u3 := &board.Unit{Position: gal}
+	u1 := &board.Unit{Territory: bud}
+	u2 := &board.Unit{Territory: vie}
+	u3 := &board.Unit{Territory: gal}
 
 	orders := order.Set{}
 	move := order.Move{From: bud, To: gal}
@@ -179,12 +178,15 @@ func TestSet_Strength_WhenSupportIsCutByAttackedUnit(t *testing.T) {
 	orders.AddMoveSupport(order.MoveSupport{Move: move, By: vie})
 	orders.AddMove(order.Move{From: gal, To: vie})
 
+	moveStrength := map[*board.Unit]int{}
 	positions := &mockPositionMap{
-		MoveFunc:  func(unit *board.Unit, territory board.Territory) {},
+		MoveFunc:  func(unit *board.Unit, territory board.Territory, strength int) { moveStrength[unit] = strength },
 		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1, u2, u3} },
 	}
 
 	handler.ApplyOrders(orders, positions)
 
-	is.Equal(1, u1.Strength)
+	is.Equal(2, len(moveStrength))
+	is.Equal(1, moveStrength[u1])
+	is.Equal(0, moveStrength[u3])
 }

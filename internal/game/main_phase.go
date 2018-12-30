@@ -21,14 +21,11 @@ func (h MainPhaseHandler) ApplyOrders(orders order.Set, positions board.Position
 	for _, unit := range all {
 		for _, move := range orders.Moves {
 			from, to := move.From.Abbr, move.To.Abbr
-			if unit.Position.Abbr != from || unit.PrevPosition != nil {
+			neighbours, _ := h.ArmyGraph.IsNeighbour(from, to)
+			if unit.PrevPosition() != nil || from != unit.Position().Territory.Abbr || !neighbours {
 				continue
 			}
-			neighbours, _ := h.ArmyGraph.IsNeighbour(from, to)
-			if neighbours && from == unit.Position.Abbr {
-				h.setMoveStrength(unit, move, orders)
-				positions.Move(unit, move.To)
-			}
+			positions.Move(unit, move.To, h.strength(unit, move, orders))
 		}
 	}
 }
@@ -39,32 +36,34 @@ func (h MainPhaseHandler) ResolveOrderConflicts(positions board.PositionManager)
 		if len(units) == 0 {
 			return nil
 		}
-		defeated := false
-		sort.Sort(board.UnitsByStrength(units))
-		if units[0].Strength > units[1].Strength {
+		var defeated bool
+		sort.Sort(board.UnitPositionsByStrength(units))
+		if units[0].Position().Strength > units[1].Position().Strength {
 			units, defeated = units[1:], true
 		}
 		for _, u := range units {
 			if u == nil {
 				continue
 			}
-			if u.AtOrigin() {
-				positions.SetDefeated(u, defeated)
-			} else {
-				positions.Bounce(u, *u.PrevPosition)
+			if u.AtOrigin() && defeated {
+				positions.SetDefeated(u)
+			} else if !u.AtOrigin() {
+				positions.Bounce(u)
 			}
 		}
 	}
 }
 
-func (h MainPhaseHandler) setMoveStrength(u *board.Unit, move *order.Move, orders order.Set) {
+func (h MainPhaseHandler) strength(u *board.Unit, move *order.Move, orders order.Set) int {
+	strength := 0
 	for _, support := range orders.MoveSupports {
 		if support.Move.From.Abbr == move.From.Abbr &&
 			support.Move.To.Abbr == move.To.Abbr &&
 			!h.moveSupportCut(*support, orders) {
-			u.Strength++
+			strength++
 		}
 	}
+	return strength
 }
 
 func (h MainPhaseHandler) moveSupportCut(support order.MoveSupport, orders order.Set) bool {

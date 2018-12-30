@@ -156,7 +156,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 				orders.AddMoveConvoy(v)
 			}
 
-			u := &board.Unit{Position: terr}
+			u := &board.Unit{Territory: terr}
 			units = append(units, u)
 			orderResult.unit = u
 
@@ -167,16 +167,14 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 
 		orderHandler := game.MainPhaseHandler{ArmyGraph: graph}
 		orderHandler.ApplyOrders(orders, positions)
-
 		err := orderHandler.ResolveOrderConflicts(positions)
 		is.NoErr(err)
 
 		for _, orderResult := range orderCase.orders {
 			is.NotNil(orderResult.unit)
-			is.Equal(orderResult.defeated, orderResult.unit.Defeated)
-			is.Equal(orderResult.result, orderResult.unit.Position.Abbr)
+			is.Equal(orderResult.defeated, orderResult.unit.Defeated())
+			is.Equal(orderResult.result, orderResult.unit.Position().Territory.Abbr)
 		}
-
 		is.Equal(len(orderCase.orders), len(positions.Units()))
 	}
 }

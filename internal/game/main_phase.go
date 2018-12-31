@@ -8,33 +8,34 @@ import (
 )
 
 type Handler interface {
-	ApplyOrders(order.Set, board.PositionManager)
-	ResolveOrderConflicts(board.PositionMap) (board.PositionMap, error)
+	ApplyOrders(order.Set, board.Manager)
+	ResolveOrders(board.Manager)
 }
 
 type MainPhaseHandler struct {
 	ArmyGraph board.Graph
 }
 
-func (h MainPhaseHandler) ApplyOrders(orders order.Set, positions board.PositionManager) {
+func (h MainPhaseHandler) ApplyOrders(orders order.Set, positions board.Manager) {
 	all := positions.Units()
 	for _, unit := range all {
 		for _, move := range orders.Moves {
 			from, to := move.From.Abbr, move.To.Abbr
 			neighbours, _ := h.ArmyGraph.IsNeighbour(from, to)
-			if unit.PrevPosition() != nil || from != unit.Position().Territory.Abbr || !neighbours {
+			if from != unit.Position().Territory.Abbr || !neighbours {
 				continue
 			}
 			positions.Move(unit, move.To, h.strength(unit, move, orders))
+			break
 		}
 	}
 }
 
-func (h MainPhaseHandler) ResolveOrderConflicts(positions board.PositionManager) error {
+func (h MainPhaseHandler) ResolveOrders(positions board.Manager) {
 	for {
 		units := positions.Conflict()
 		if len(units) == 0 {
-			return nil
+			return
 		}
 		var defeated bool
 		sort.Sort(board.UnitPositionsByStrength(units))
@@ -42,13 +43,10 @@ func (h MainPhaseHandler) ResolveOrderConflicts(positions board.PositionManager)
 			units, defeated = units[1:], true
 		}
 		for _, u := range units {
-			if u == nil {
-				continue
-			}
-			if u.AtOrigin() && defeated {
-				positions.SetDefeated(u)
-			} else if !u.AtOrigin() {
+			if !u.AtOrigin() {
 				positions.Bounce(u)
+			} else if defeated {
+				positions.SetDefeated(u)
 			}
 		}
 	}

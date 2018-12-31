@@ -5,7 +5,7 @@ import (
 )
 
 type UnitMatcher interface {
-	Match(manager board.PositionManager) *board.Unit
+	Match(manager board.Manager) *board.Unit
 }
 
 type Move struct {
@@ -15,7 +15,7 @@ type Move struct {
 	Strength int
 }
 
-func (m Move) Match(manager board.PositionManager) *board.Unit {
+func (m Move) Match(manager board.Manager) *board.Unit {
 	return nil
 }
 

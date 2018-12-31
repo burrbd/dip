@@ -163,12 +163,11 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 			logTableRow(t, *orderResult)
 		}
 
-		positions := board.NewPositionMap(units)
+		positions := board.NewPositionManager(units)
 
 		orderHandler := game.MainPhaseHandler{ArmyGraph: graph}
 		orderHandler.ApplyOrders(orders, positions)
-		err := orderHandler.ResolveOrderConflicts(positions)
-		is.NoErr(err)
+		orderHandler.ResolveOrders(positions)
 
 		for _, orderResult := range orderCase.orders {
 			is.NotNil(orderResult.unit)

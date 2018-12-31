@@ -55,6 +55,15 @@ func (u *Unit) Defeated() bool {
 	return false
 }
 
+func (u *Unit) Moved() bool {
+	for _, position := range u.PhaseHistory {
+		if position.Cause == Moved {
+			return true
+		}
+	}
+	return false
+}
+
 func (u *Unit) Position() Position {
 	n := len(u.PhaseHistory)
 	if n > 0 {

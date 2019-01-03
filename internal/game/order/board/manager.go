@@ -28,11 +28,9 @@ func (m PositionManager) Units() []*Unit {
 }
 
 func (m PositionManager) Conflict() []*Unit {
-	for _, units := range m.counterMoveConflicts {
-		if len(units) == 2 && !units[0].Defeated() && !units[1].Defeated() {
-			unitsCopy := make([]*Unit, 2)
-			copy(unitsCopy, units)
-			return unitsCopy
+	for _, moveConflict := range m.counterMoveConflicts {
+		if moveConflict[0] != nil && moveConflict[1] != nil && !moveConflict[0].Defeated() && !moveConflict[1].Defeated() {
+			return []*Unit{moveConflict[0], moveConflict[1]}
 		}
 	}
 	for _, units := range m.territoryConflicts {
@@ -52,19 +50,19 @@ func (m PositionManager) Move(u *Unit, next Territory, strength int) {
 	u.PhaseHistory = append(u.PhaseHistory, Position{
 		Territory: next, Strength: strength, Cause: Moved})
 	m.territoryConflicts.add(u)
-	m.counterMoveConflicts.add(u)
+	if u.PrevPosition() != nil {
+		m.counterMoveConflicts.add(u)
+	}
 }
 
 func (m PositionManager) Bounce(u *Unit) {
-	prev := u.PrevPosition()
-	if prev == nil {
+	if u.PrevPosition() == nil {
 		return
 	}
-	next := prev.Territory
 	m.counterMoveConflicts.del(u)
 	m.territoryConflicts.del(u)
 	u.PhaseHistory = append(u.PhaseHistory, Position{
-		Territory: next, Strength: 0, Cause: Bounced})
+		Territory: u.PrevPosition().Territory, Strength: 0, Cause: Bounced})
 	m.territoryConflicts.add(u)
 }
 

@@ -5,29 +5,25 @@ import (
 	"strings"
 )
 
-type counterMoveConflicts map[string][]*Unit
+type counterMoveConflicts map[string][2]*Unit
 
 func (conflicts counterMoveConflicts) add(u *Unit) {
-	if u.PrevPosition() == nil {
-		return
-	}
 	key := movePairKey(u.Position().Territory, u.PrevPosition().Territory)
-	if _, ok := conflicts[key]; !ok {
-		conflicts[key] = make([]*Unit, 0, 2)
+	pair := conflicts[key]
+	if pair[0] == nil {
+		conflicts[key] = [2]*Unit{u, pair[1]}
+	} else {
+		conflicts[key] = [2]*Unit{pair[0], u}
 	}
-	conflicts[key] = append(conflicts[key], u)
 }
 
 func (conflicts counterMoveConflicts) del(u *Unit) {
-	if u.PrevPosition() == nil {
-		return
-	}
 	key := movePairKey(u.PrevPosition().Territory, u.Position().Territory)
 	pair := conflicts[key]
-	for i, cu := range pair {
-		if u == cu {
-			conflicts[key] = removeIndex(i, pair)
-		}
+	if pair[0] == u {
+		conflicts[key] = [2]*Unit{nil, pair[1]}
+	} else if pair[1] == u {
+		conflicts[key] = [2]*Unit{pair[0], nil}
 	}
 }
 

@@ -34,7 +34,7 @@ func (h MainPhaseHandler) ApplyOrders(orders order.Set, positions board.Manager)
 func (h MainPhaseHandler) ResolveOrders(positions board.Manager) {
 	for {
 		units := positions.Conflict()
-		if len(units) == 0 {
+		if units == nil {
 			return
 		}
 		var defeated bool

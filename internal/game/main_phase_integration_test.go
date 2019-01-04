@@ -132,10 +132,11 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 	}
 
 	for i, orderCase := range cases {
+		positionManager := board.NewPositionManager()
+
 		logTableHeading(t, orderCase.description, i)
 
 		orders := order.Set{}
-		units := make([]*board.Unit, 0)
 
 		for _, orderResult := range orderCase.orders {
 			o, err := order.Decode(orderResult.order)
@@ -156,25 +157,23 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 				orders.AddMoveConvoy(v)
 			}
 
-			u := &board.Unit{Territory: terr}
-			units = append(units, u)
-			orderResult.unit = u
+			u := &board.Unit{}
+			positionManager.AddUnit(u, terr)
 
+			orderResult.unit = u
 			logTableRow(t, *orderResult)
 		}
 
-		positions := board.NewPositionManager(units)
-
 		orderHandler := game.MainPhaseHandler{ArmyGraph: graph}
-		orderHandler.ApplyOrders(orders, positions)
-		orderHandler.ResolveOrders(positions)
+		orderHandler.ApplyOrders(orders, positionManager)
+		orderHandler.ResolveOrders(positionManager)
 
 		for _, orderResult := range orderCase.orders {
 			is.NotNil(orderResult.unit)
 			is.Equal(orderResult.defeated, orderResult.unit.Defeated())
 			is.Equal(orderResult.result, orderResult.unit.Position().Territory.Abbr)
 		}
-		is.Equal(len(orderCase.orders), len(positions.Units()))
+		is.Equal(len(orderCase.orders), len(positionManager.Units()))
 	}
 }
 

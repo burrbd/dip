@@ -70,7 +70,7 @@ func TestOrderHandler_HandleMove(t *testing.T) {
 	is.NoErr(err)
 	mm1 := m1.(order.Move)
 	set.AddMove(mm1)
-	u1 := &board.Unit{Territory: mm1.From}
+	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: mm1.From}}}
 
 	act := call{}
 	positions := &mockPositionMap{
@@ -104,7 +104,7 @@ func TestOrderHandler_Handle_NotNeighbor_DoesNotCallMove(t *testing.T) {
 	mm1 := m1.(order.Move)
 	set.AddMove(mm1)
 
-	u1 := &board.Unit{Territory: mm1.From}
+	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: mm1.From}}}
 
 	positions := &mockPositionMap{
 		MoveFunc:  func(unit *board.Unit, territory board.Territory, strength int) { is.Fail("unexpected Move() call") },
@@ -119,10 +119,9 @@ func TestOrderHandler_Handle_NotNeighbor_DoesNotCallMove(t *testing.T) {
 func TestSet_Strength(t *testing.T) {
 	is := is.New(t)
 
-	u1 := &board.Unit{Territory: bud}
-	u2 := &board.Unit{Territory: vie}
-	u3 := &board.Unit{Territory: boh}
-
+	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: bud}}}
+	u2 := &board.Unit{PhaseHistory: []board.Position{{Territory: vie}}}
+	u3 := &board.Unit{PhaseHistory: []board.Position{{Territory: boh}}}
 	orders := order.Set{}
 	m := order.Move{From: bud, To: gal}
 	orders.AddMove(m)
@@ -143,9 +142,9 @@ func TestSet_Strength_WhenSupportIsCut(t *testing.T) {
 	// boh -> vie
 	is := is.New(t)
 	orders := order.Set{}
-	u1 := &board.Unit{Territory: bud}
-	u2 := &board.Unit{Territory: vie}
-	u3 := &board.Unit{Territory: boh}
+	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: bud}}}
+	u2 := &board.Unit{PhaseHistory: []board.Position{{Territory: vie}}}
+	u3 := &board.Unit{PhaseHistory: []board.Position{{Territory: boh}}}
 	move := order.Move{From: bud, To: gal}
 	orders.AddMove(move)
 	orders.AddMoveSupport(order.MoveSupport{Move: move, By: vie})
@@ -168,9 +167,9 @@ func TestSet_Strength_WhenSupportIsCutByAttackedUnit(t *testing.T) {
 
 	// gal can't cut support because the support is for attack against gal
 	is := is.New(t)
-	u1 := &board.Unit{Territory: bud}
-	u2 := &board.Unit{Territory: vie}
-	u3 := &board.Unit{Territory: gal}
+	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: bud}}}
+	u2 := &board.Unit{PhaseHistory: []board.Position{{Territory: vie}}}
+	u3 := &board.Unit{PhaseHistory: []board.Position{{Territory: gal}}}
 
 	orders := order.Set{}
 	move := order.Move{From: bud, To: gal}

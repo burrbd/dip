@@ -23,7 +23,6 @@ func (t Territory) ID() string {
 type Unit struct {
 	Country      string
 	Type         UnitType
-	Territory    Territory
 	PhaseHistory []Position
 }
 
@@ -43,7 +42,9 @@ const (
 )
 
 func (u *Unit) AtOrigin() bool {
-	return u.Position().Territory == u.Territory
+	return len(u.PhaseHistory) > 0 &&
+		u.Position().Territory == u.PhaseHistory[0].Territory &&
+		u.PhaseHistory[0].Cause == Originated
 }
 
 func (u *Unit) Defeated() bool {
@@ -66,13 +67,10 @@ func (u *Unit) Moved() bool {
 
 func (u *Unit) Position() Position {
 	n := len(u.PhaseHistory)
-	if n > 0 {
-		return u.PhaseHistory[n-1]
+	if n == 0 {
+		return Position{}
 	}
-	position := Position{Territory: u.Territory, Strength: 0, Cause: Originated}
-	u.PhaseHistory = make([]Position, 0)
-	u.PhaseHistory = append(u.PhaseHistory, position)
-	return position
+	return u.PhaseHistory[n-1]
 }
 
 func (u *Unit) PrevPosition() *Position {

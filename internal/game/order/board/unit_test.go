@@ -29,8 +29,8 @@ func TestUnit_AtOrigin(t *testing.T) {
 	is := is.New(t)
 
 	u := board.Unit{
-		Territory: board.Territory{Abbr: "t1"},
-	}
+		PhaseHistory: []board.Position{
+			{Territory: board.Territory{Abbr: "t1"}, Cause: board.Originated}}}
 	is.True(u.AtOrigin())
 }
 
@@ -38,9 +38,9 @@ func TestUnit_AtOrigin_WhenNotAtOrigin(t *testing.T) {
 	is := is.New(t)
 
 	u := board.Unit{
-		Territory:    board.Territory{Abbr: "t1"},
-		PhaseHistory: []board.Position{{Territory: board.Territory{Abbr: "t2"}}},
-	}
+		PhaseHistory: []board.Position{
+			{Territory: board.Territory{Abbr: "t1"}, Cause: board.Originated},
+			{Territory: board.Territory{Abbr: "t2"}}}}
 	is.False(u.AtOrigin())
 }
 
@@ -48,10 +48,7 @@ func TestUnit_Defeated(t *testing.T) {
 	is := is.New(t)
 
 	u := board.Unit{
-		Territory: board.Territory{Abbr: "t1"},
 		PhaseHistory: []board.Position{
-			{Territory: board.Territory{Abbr: "t1"}, Cause: board.Defeated},
-		},
-	}
+			{Territory: board.Territory{Abbr: "t1"}, Cause: board.Defeated}}}
 	is.True(u.Defeated())
 }

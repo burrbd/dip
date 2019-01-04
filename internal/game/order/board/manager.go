@@ -13,10 +13,19 @@ type PositionManager struct {
 	counterMoveConflicts counterMoveConflicts
 }
 
-func NewPositionManager(units []*Unit) PositionManager {
+func NewPositionManager() PositionManager {
 	return PositionManager{
-		territoryConflicts:   newTerritoryConflicts(units),
+		territoryConflicts:   make(territoryConflicts, 0),
 		counterMoveConflicts: make(counterMoveConflicts)}
+}
+
+func (m PositionManager) AddUnit(unit *Unit, territory Territory) {
+	unit.PhaseHistory = make([]Position, 0)
+	unit.PhaseHistory = append(unit.PhaseHistory, Position{
+		Territory: territory,
+		Cause:     Originated,
+	})
+	m.territoryConflicts.add(unit)
 }
 
 func (m PositionManager) Units() []*Unit {

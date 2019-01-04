@@ -53,3 +53,12 @@ func TestUnit_Defeated(t *testing.T) {
 			{Territory: board.Territory{Abbr: "t1"}, Cause: board.Defeated}}}
 	is.True(u.Defeated())
 }
+
+func TestUnit_Moved(t *testing.T) {
+	is := is.New(t)
+
+	u := board.Unit{
+		PhaseHistory: []board.Position{
+			{Territory: board.Territory{Abbr: "t1"}, Cause: board.Moved}}}
+	is.True(u.Moved())
+}

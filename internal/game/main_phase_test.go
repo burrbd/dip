@@ -3,11 +3,11 @@ package game_test
 import (
 	"testing"
 
+	"github.com/cheekybits/is"
+
 	"github.com/burrbd/diplomacy/internal/game"
 	"github.com/burrbd/diplomacy/internal/game/order"
 	"github.com/burrbd/diplomacy/internal/game/order/board"
-
-	"github.com/cheekybits/is"
 )
 
 var (

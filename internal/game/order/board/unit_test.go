@@ -4,8 +4,9 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/burrbd/diplomacy/internal/game/order/board"
 	"github.com/cheekybits/is"
+
+	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
 
 func TestUnitsByStrength(t *testing.T) {

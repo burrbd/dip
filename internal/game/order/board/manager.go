@@ -38,7 +38,10 @@ func (m PositionManager) Units() []*Unit {
 
 func (m PositionManager) Conflict() []*Unit {
 	for _, moveConflict := range m.counterMoveConflicts {
-		if moveConflict[0] != nil && moveConflict[1] != nil && !moveConflict[0].Defeated() && !moveConflict[1].Defeated() {
+		if moveConflict[0] != nil &&
+			moveConflict[1] != nil &&
+			!moveConflict[0].Defeated() &&
+			!moveConflict[1].Defeated() {
 			return []*Unit{moveConflict[0], moveConflict[1]}
 		}
 	}

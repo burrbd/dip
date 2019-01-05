@@ -3,9 +3,8 @@ package board_test
 import (
 	"testing"
 
+	"github.com/burrbd/dip/game/order/board"
 	"github.com/cheekybits/is"
-
-	"github.com/burrbd/diplomacy/internal/game/order/board"
 )
 
 func TestPositionManager_Move_UpdatesPosition(t *testing.T) {

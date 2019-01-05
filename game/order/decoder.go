@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/burrbd/diplomacy/internal/game/order/board"
+	"github.com/burrbd/dip/game/order/board"
 )
 
 var (

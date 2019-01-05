@@ -3,8 +3,8 @@ package game
 import (
 	"sort"
 
-	"github.com/burrbd/diplomacy/internal/game/order"
-	"github.com/burrbd/diplomacy/internal/game/order/board"
+	"github.com/burrbd/dip/game/order"
+	"github.com/burrbd/dip/game/order/board"
 )
 
 type Handler interface {

@@ -1,8 +1,6 @@
 package order
 
-import (
-	"github.com/burrbd/diplomacy/internal/game/order/board"
-)
+import "github.com/burrbd/dip/game/order/board"
 
 type UnitMatcher interface {
 	Match(manager board.Manager) *board.Unit

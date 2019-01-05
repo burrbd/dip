@@ -5,9 +5,9 @@ import (
 
 	"github.com/cheekybits/is"
 
-	"github.com/burrbd/diplomacy/internal/game"
-	"github.com/burrbd/diplomacy/internal/game/order"
-	"github.com/burrbd/diplomacy/internal/game/order/board"
+	"github.com/burrbd/dip/game"
+	"github.com/burrbd/dip/game/order"
+	"github.com/burrbd/dip/game/order/board"
 )
 
 var (

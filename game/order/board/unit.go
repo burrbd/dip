@@ -65,12 +65,12 @@ func (u *Unit) Moved() bool {
 	return false
 }
 
-func (u *Unit) Position() Position {
+func (u *Unit) Position() *Position {
 	n := len(u.PhaseHistory)
 	if n == 0 {
-		return Position{}
+		return nil
 	}
-	return u.PhaseHistory[n-1]
+	return &u.PhaseHistory[n-1]
 }
 
 func (u *Unit) PrevPosition() *Position {
@@ -98,5 +98,11 @@ func (s strengthSorter) Swap(i, j int) {
 }
 
 func (s strengthSorter) Less(i, j int) bool {
+	if s.units[i].Position() == nil {
+		return false
+	}
+	if s.units[j].Position() == nil {
+		return true
+	}
 	return s.units[i].Position().Strength > s.units[j].Position().Strength
 }

@@ -25,6 +25,18 @@ func TestUnitsByStrength(t *testing.T) {
 	is.Equal(u3, units[2])
 }
 
+func TestUnitsByStrength_NoPosition(t *testing.T) {
+	is := is.New(t)
+	u1 := &board.Unit{PhaseHistory: []board.Position{{Strength: 1}}}
+	u2 := &board.Unit{}
+
+	units := []*board.Unit{u2, u1}
+	sort.Sort(board.UnitPositionsByStrength(units))
+
+	is.Equal(u1, units[0])
+	is.Equal(u2, units[1])
+}
+
 func TestUnit_AtOrigin(t *testing.T) {
 	is := is.New(t)
 

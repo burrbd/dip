@@ -59,8 +59,8 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given unit attacks territory and defending territory attacks support, then attacking " +
-			"unit still wins",
+		description: "given unit attacks territory and defending territory attacks support, " +
+			"then attacking unit still wins",
 		orders: []*orderResult{
 			{order: "A Gal-Vie", result: "vie"},
 			{order: "A Boh S A Gal-Vie", result: "boh"},
@@ -84,8 +84,8 @@ var cases = []orderCase{
 		},
 	},
 	{
-		description: "given a counterattack, and another unit attacks one counterattack party " +
-			"with support then supported unit wins",
+		description: "given a counterattack, and another unit attacks one counterattack party with support, " +
+			"then supported unit wins",
 		orders: []*orderResult{
 			{order: "A Vie-Bud", result: "vie", defeated: true},
 			{order: "A Bud-Vie", result: "bud"},
@@ -102,6 +102,14 @@ var cases = []orderCase{
 			{order: "A Sil S A Bud-Vie", result: "sil"},
 			{order: "A Boh-Vie", result: "boh"},
 			{order: "A Tyr S A Boh-Vie", result: "tyr"},
+		},
+	},
+	{
+		description: "given a unit holds and another unit supports holding unit," +
+			"then both units remain in position",
+		orders: []*orderResult{
+			{order: "A Vie H", result: "vie"},
+			{order: "A Bud S A Vie", result: "bud"},
 		},
 	},
 }
@@ -147,11 +155,14 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 				terr = v.From
 				orders.AddMove(v)
 			case order.Hold:
-				terr = v.Pos
+				terr = v.At
 				orders.AddHold(v)
 			case order.MoveSupport:
 				terr = v.By
 				orders.AddMoveSupport(v)
+			case order.HoldSupport:
+				terr = v.By
+				orders.AddHoldSupport(v)
 			case order.MoveConvoy:
 				terr = v.By
 				orders.AddMoveConvoy(v)

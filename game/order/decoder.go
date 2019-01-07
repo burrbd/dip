@@ -1,68 +1,117 @@
 package order
 
 import (
-	"errors"
-	"regexp"
+	"fmt"
 	"strings"
 
 	"github.com/burrbd/dip/game/order/board"
 )
 
-var (
-	orderPrefix = `([A|F])\s([A-Za-z]{3})\s([S|C|H])?`
-	orderMove   = `([A|F])\s([A-Za-z]{3})\-([A-Za-z]{3})`
-	orderRE     = regexp.MustCompile(`(` + orderPrefix + `)?(\s)?(` + orderMove + `)?`)
-)
-
 func Decode(order string) (interface{}, error) {
-	result := orderRE.FindAllStringSubmatch(order, -1)
-	matches := result[0]
-	if matches[0] == "" {
-		return nil, errors.New("invalid order")
-	}
-	prefixMatch := matches[1] != ""
-	sepMatch := matches[5] != ""
-	moveMatch := matches[6] != ""
-	if prefixMatch && !moveMatch {
-		return decodeHold(matches)
-	}
-	if prefixMatch && moveMatch && !sepMatch {
-		return nil, errors.New("invalid order")
-	}
-	unit := unitType(rune(matches[7][0]))
-	from := strings.ToLower(matches[8])
-	to := strings.ToLower(matches[9])
-	move := Move{UnitType: unit, From: board.Territory{Abbr: from}, To: board.Territory{Abbr: to}}
-	if prefixMatch {
-		return decodePrefix(matches, move)
-	}
-	return move, nil
-}
-
-func decodePrefix(matches []string, move Move) (interface{}, error) {
-	by := board.Territory{Abbr: strings.ToLower(matches[3])}
-	unit := unitType(rune(matches[2][0]))
-	if matches[4] == "C" {
-		if unit == board.Army {
-			return nil, errors.New("cannot convoy with army")
+	tokens := strings.Split(strings.ToLower(order), " ")
+	n := len(tokens)
+	switch n {
+	case 2:
+		return decodeMove(tokens)
+	case 3:
+		return decodeHold(tokens)
+	case 5:
+		if tokens[2] == "c" {
+			return decodeConvoy(tokens)
+		} else if tokens[2] == "s" {
+			return decodeSupport(tokens)
 		}
-		return MoveConvoy{Move: move, By: by}, nil
+		fallthrough
+	default:
+		return nil, fmt.Errorf("invalid order: %s", order)
 	}
-	return MoveSupport{UnitType: unit, Move: move, By: by}, nil
 }
 
-func decodeHold(matches []string) (interface{}, error) {
-	if matches[4] != "H" {
-		return nil, errors.New("invalid order")
+func decodeMove(tokens []string) (interface{}, error) {
+	unit, err := unitType(tokens[0])
+	if err != nil {
+		return nil, err
 	}
-	pos := board.Territory{Abbr: strings.ToLower(matches[3])}
-	unit := unitType(rune(matches[2][0]))
-	return Hold{UnitType: unit, Pos: pos}, nil
+	fromTo := strings.Split(tokens[1], "-")
+	if len(fromTo) != 2 {
+		return nil, fmt.Errorf("invalid order: %s", strings.Join(tokens, " "))
+	}
+	from, to := fromTo[0], fromTo[1]
+	return Move{
+		UnitType: unit,
+		From:     board.Territory{Abbr: from},
+		To:       board.Territory{Abbr: to}}, nil
 }
 
-func unitType(letter rune) board.UnitType {
-	if letter == 'F' {
-		return board.Fleet
+func decodeHold(tokens []string) (interface{}, error) {
+	unit, err := unitType(tokens[0])
+	if err != nil {
+		return nil, err
 	}
-	return board.Army
+	at := tokens[1]
+	if tokens[2] != "h" {
+		return nil, fmt.Errorf("invalid order: %s", strings.Join(tokens, " "))
+	}
+	return Hold{
+		UnitType: unit,
+		At:       board.Territory{Abbr: at},
+	}, nil
+}
+
+func decodeSupport(tokens []string) (interface{}, error) {
+	unit, err := unitType(tokens[0])
+	if err != nil {
+		return nil, err
+	}
+	fromTo := strings.Split(tokens[4], "-")
+	if len(fromTo) == 2 {
+		move, err := decodeMove(tokens[3:])
+		if err != nil {
+			return nil, err
+		}
+		return MoveSupport{
+			UnitType: unit,
+			By:       board.Territory{Abbr: tokens[1]},
+			Move:     move.(Move),
+		}, nil
+	}
+	supportedUnit, err := unitType(tokens[3])
+	if err != nil {
+		return nil, err
+	}
+	return HoldSupport{
+		UnitType: unit,
+		By:       board.Territory{Abbr: tokens[1]},
+		Hold:     Hold{UnitType: supportedUnit, At: board.Territory{Abbr: tokens[4]}},
+	}, nil
+}
+
+func decodeConvoy(tokens []string) (interface{}, error) {
+	if tokens[0] != "f" {
+		return nil, fmt.Errorf("invalid order; only fleet can convoy: %s", strings.Join(tokens, " "))
+	}
+	fromTo := strings.Split(tokens[4], "-")
+	if len(fromTo) != 2 {
+		return nil, fmt.Errorf("invalid order: %s", strings.Join(tokens, " "))
+	}
+	move, err := decodeMove(tokens[3:])
+	if err != nil {
+		return nil, err
+	}
+	return MoveConvoy{
+		By:   board.Territory{Abbr: tokens[1]},
+		Move: move.(Move),
+	}, nil
+}
+
+func unitType(unitToken string) (board.UnitType, error) {
+	n := len(unitToken)
+	switch {
+	case n == 1 && unitToken[0] == 'f':
+		return board.Fleet, nil
+	case n == 1 && unitToken[0] == 'a':
+		return board.Army, nil
+	default:
+		return board.UnitType('?'), fmt.Errorf("invalid unit type: %s", string(unitToken))
+	}
 }

@@ -71,15 +71,34 @@ func TestDecode_ConvoyMoveWithArmyReturnsError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestDecode_UnitHolds(t *testing.T) {
+func TestDecode_Hold(t *testing.T) {
 	is := is.New(t)
 	hold := "A Abc H"
 	decHold, err := order.Decode(hold)
 	is.NoErr(err)
 	expHold := order.Hold{
 		UnitType: board.Army,
-		Pos:      board.Territory{Abbr: "abc"}}
+		At:       board.Territory{Abbr: "abc"}}
 	is.Equal(expHold, decHold)
+}
+
+func TestDecode_Hold_WithWrongHoldToken(t *testing.T) {
+	is := is.New(t)
+	hold := "A Abc s"
+	_, err := order.Decode(hold)
+	is.Err(err)
+}
+func TestDecode_SupportUnitHold(t *testing.T) {
+	is := is.New(t)
+	support := "A Ghi S A Abc"
+	decSupport, err := order.Decode(support)
+	is.NoErr(err)
+	expSupport := order.HoldSupport{
+		UnitType: board.Army,
+		By:       ghi,
+		Hold:     order.Hold{UnitType: board.Army, At: abc}}
+	is.Equal(expSupport, decSupport)
+
 }
 
 func TestDecode_WhenInvalidReturnError(t *testing.T) {

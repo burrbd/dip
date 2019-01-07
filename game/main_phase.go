@@ -52,12 +52,12 @@ func (h MainPhaseHandler) ResolveOrders(positions board.Manager) {
 	}
 }
 
-func (h MainPhaseHandler) strength(u *board.Unit, move *order.Move, orders order.Set) int {
+func (h MainPhaseHandler) strength(u *board.Unit, move order.Move, orders order.Set) int {
 	strength := 0
 	for _, support := range orders.MoveSupports {
 		if support.Move.From.Abbr == move.From.Abbr &&
 			support.Move.To.Abbr == move.To.Abbr &&
-			!h.moveSupportCut(*support, orders) {
+			!h.moveSupportCut(support, orders) {
 			strength++
 		}
 	}

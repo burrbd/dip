@@ -13,10 +13,6 @@ type Move struct {
 	Strength int
 }
 
-func (m Move) Match(manager board.Manager) *board.Unit {
-	return nil
-}
-
 type MoveSupport struct {
 	Country  string
 	UnitType board.UnitType
@@ -33,26 +29,37 @@ type MoveConvoy struct {
 type Hold struct {
 	Country  string
 	UnitType board.UnitType
-	Pos      board.Territory
+	At       board.Territory
+}
+
+type HoldSupport struct {
+	UnitType board.UnitType
+	By       board.Territory
+	Hold     Hold
 }
 
 type Set struct {
-	Moves        []*Move
-	MoveSupports []*MoveSupport
+	Moves        []Move
+	MoveSupports []MoveSupport
+	HoldSupports []HoldSupport
 }
 
 func (s *Set) AddMove(m Move) {
-	s.Moves = append(s.Moves, &m)
-}
-
-func (s *Set) AddMoveSupport(sup MoveSupport) {
-	s.MoveSupports = append(s.MoveSupports, &sup)
-}
-
-func (s *Set) AddMoveConvoy(sup MoveConvoy) {
-
+	s.Moves = append(s.Moves, m)
 }
 
 func (s *Set) AddHold(hold Hold) {
+
+}
+
+func (s *Set) AddMoveSupport(sup MoveSupport) {
+	s.MoveSupports = append(s.MoveSupports, sup)
+}
+
+func (s *Set) AddHoldSupport(sup HoldSupport) {
+	s.HoldSupports = append(s.HoldSupports, sup)
+}
+
+func (s *Set) AddMoveConvoy(sup MoveConvoy) {
 
 }

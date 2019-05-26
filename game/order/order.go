@@ -3,7 +3,7 @@ package order
 import "github.com/burrbd/dip/game/order/board"
 
 type UnitMatcher interface {
-	Match(manager board.Manager) *board.Unit
+	Match(board.Manager) *board.Unit
 }
 
 type Move struct {
@@ -41,6 +41,7 @@ type HoldSupport struct {
 type Set struct {
 	Moves        []Move
 	MoveSupports []MoveSupport
+	Holds        []Hold
 	HoldSupports []HoldSupport
 }
 
@@ -48,8 +49,8 @@ func (s *Set) AddMove(m Move) {
 	s.Moves = append(s.Moves, m)
 }
 
-func (s *Set) AddHold(hold Hold) {
-
+func (s *Set) AddHold(h Hold) {
+	s.Holds = append(s.Holds, h)
 }
 
 func (s *Set) AddMoveSupport(sup MoveSupport) {

@@ -35,34 +35,23 @@ type Position struct {
 type PositionEvent int
 
 const (
-	Originated PositionEvent = iota
+	Added PositionEvent = iota
+	Held
 	Moved
 	Bounced
 	Defeated
 )
 
 func (u *Unit) AtOrigin() bool {
-	return len(u.PhaseHistory) > 0 &&
-		u.Position().Territory == u.PhaseHistory[0].Territory &&
-		u.PhaseHistory[0].Cause == Originated
+	pos := u.Position()
+	if pos == nil {
+		return false
+	}
+	return pos.Territory.Abbr == u.PhaseHistory[0].Territory.Abbr
 }
 
 func (u *Unit) Defeated() bool {
-	for _, position := range u.PhaseHistory {
-		if position.Cause == Defeated {
-			return true
-		}
-	}
-	return false
-}
-
-func (u *Unit) Moved() bool {
-	for _, position := range u.PhaseHistory {
-		if position.Cause == Moved {
-			return true
-		}
-	}
-	return false
+	return u.Position().Cause == Defeated
 }
 
 func (u *Unit) Position() *Position {

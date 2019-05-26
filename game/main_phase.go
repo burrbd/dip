@@ -7,30 +7,44 @@ import (
 	"github.com/burrbd/dip/game/order/board"
 )
 
+// Handler main game phase order handler and resolver
 type Handler interface {
 	ApplyOrders(order.Set, board.Manager)
 	ResolveOrders(board.Manager)
 }
 
+// MainPhaseHandler implments Handler
 type MainPhaseHandler struct {
 	ArmyGraph board.Graph
 }
 
+// ApplyOrders applies orders for a turn. Satisifies Handler interface
 func (h MainPhaseHandler) ApplyOrders(orders order.Set, positions board.Manager) {
 	all := positions.Units()
 	for _, unit := range all {
 		for _, move := range orders.Moves {
 			from, to := move.From.Abbr, move.To.Abbr
 			neighbours, _ := h.ArmyGraph.IsNeighbour(from, to)
-			if from != unit.Position().Territory.Abbr || !neighbours {
+			if !neighbours || from != unit.Position().Territory.Abbr {
 				continue
 			}
-			positions.Move(unit, move.To, h.strength(unit, move, orders))
+			strength := h.strength(move, orders)
+			positions.Move(unit, move.To, strength)
+			break
+		}
+		for _, hold := range orders.Holds {
+			pos := unit.Position()
+			if pos == nil || pos.Cause != board.Added || unit.Position().Territory.Abbr != hold.At.Abbr {
+				continue
+			}
+			strength := h.holdStrength(hold, orders)
+			positions.Hold(unit, strength)
 			break
 		}
 	}
 }
 
+// ResolveOrders resolves orders for a turn. Satisifies Handler interface
 func (h MainPhaseHandler) ResolveOrders(positions board.Manager) {
 	for {
 		units := positions.Conflict()
@@ -52,12 +66,22 @@ func (h MainPhaseHandler) ResolveOrders(positions board.Manager) {
 	}
 }
 
-func (h MainPhaseHandler) strength(u *board.Unit, move order.Move, orders order.Set) int {
+func (h MainPhaseHandler) strength(move order.Move, orders order.Set) int {
 	strength := 0
 	for _, support := range orders.MoveSupports {
 		if support.Move.From.Abbr == move.From.Abbr &&
 			support.Move.To.Abbr == move.To.Abbr &&
 			!h.moveSupportCut(support, orders) {
+			strength++
+		}
+	}
+	return strength
+}
+
+func (h MainPhaseHandler) holdStrength(hold order.Hold, orders order.Set) int {
+	strength := 0
+	for _, support := range orders.HoldSupports {
+		if support.Hold.At.Abbr == hold.At.Abbr {
 			strength++
 		}
 	}

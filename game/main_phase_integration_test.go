@@ -112,6 +112,16 @@ var specs = []spec{
 			{order: "A Bud S A Vie", position: "bud"},
 		},
 	},
+	{
+		description: "given a unit holds and is supported, and is attacked by unit with equal strength, " +
+			"then attacking unit bounces",
+		orders: []*result{
+			{order: "A Vie H", position: "vie"},
+			{order: "A Bud S A Vie", position: "bud"},
+			{order: "A Boh-Vie", position: "boh"},
+			{order: "A Tyr S A Boh-Vie", position: "tyr"},
+		},
+	},
 }
 
 type result struct {
@@ -195,14 +205,6 @@ func filter(specs []spec) []spec {
 	}
 	return focused
 }
-
-var (
-	bud = board.Territory{Abbr: "bud", Name: "Budapest"}
-	gal = board.Territory{Abbr: "gal", Name: "Galicia"}
-	vie = board.Territory{Abbr: "vie", Name: "Vienna"}
-	boh = board.Territory{Abbr: "boh", Name: "Bohemia"}
-	lon = board.Territory{Abbr: "lon", Name: "London"}
-)
 
 type mockGraph struct {
 	IsNeighbourFunc func(t1, t2 string) (bool, error)

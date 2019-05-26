@@ -2,7 +2,8 @@ package board
 
 type Manager interface {
 	Units() []*Unit
-	Move(unit *Unit, territory Territory, strength int)
+	Move(unit *Unit, to Territory, strength int)
+	Hold(unit *Unit, strength int)
 	Bounce(unit *Unit)
 	SetDefeated(unit *Unit)
 	Conflict() []*Unit
@@ -23,7 +24,7 @@ func (m PositionManager) AddUnit(unit *Unit, territory Territory) {
 	unit.PhaseHistory = make([]Position, 0)
 	unit.PhaseHistory = append(unit.PhaseHistory, Position{
 		Territory: territory,
-		Cause:     Originated,
+		Cause:     Added,
 	})
 	m.territoryConflicts.add(unit)
 }
@@ -57,18 +58,26 @@ func (m PositionManager) Conflict() []*Unit {
 	return nil
 }
 
-func (m PositionManager) Move(u *Unit, next Territory, strength int) {
+func (m PositionManager) Move(u *Unit, to Territory, strength int) {
 	m.territoryConflicts.del(u)
 	u.PhaseHistory = append(u.PhaseHistory, Position{
-		Territory: next, Strength: strength, Cause: Moved})
+		Territory: to, Strength: strength, Cause: Moved})
 	m.territoryConflicts.add(u)
 	if u.PrevPosition() != nil {
 		m.counterMoveConflicts.add(u)
 	}
 }
 
+func (m PositionManager) Hold(u *Unit, strength int) {
+	u.PhaseHistory = append(u.PhaseHistory, Position{
+		Territory: u.Position().Territory, Strength: strength, Cause: Held})
+}
+
 func (m PositionManager) Bounce(u *Unit) {
 	if u.PrevPosition() == nil {
+		return
+	}
+	if u.PrevPosition().Cause == Held {
 		return
 	}
 	m.counterMoveConflicts.del(u)

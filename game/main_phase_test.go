@@ -11,23 +11,23 @@ import (
 )
 
 var (
-	par     = board.Territory{Abbr: "par", Name: "Paris"}
-	handler = game.MainPhaseHandler{
-		ArmyGraph: mockGraph{
-			IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-		},
-	}
+	bud = board.Territory{Abbr: "bud", Name: "Budapest"}
+	gal = board.Territory{Abbr: "gal", Name: "Galicia"}
+	vie = board.Territory{Abbr: "vie", Name: "Vienna"}
+	boh = board.Territory{Abbr: "boh", Name: "Bohemia"}
+	lon = board.Territory{Abbr: "lon", Name: "London"}
 )
+
+var handler = game.MainPhaseHandler{ArmyGraph: mockGraph{IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil }}}
 
 type call struct {
 	unit *board.Unit
 	terr board.Territory
 }
 
-var calls = make([]call, 0)
-
 type mockPositionMap struct {
 	MoveFunc        func(unit *board.Unit, territory board.Territory, strength int)
+	HoldFunc        func(unit *board.Unit, strength int)
 	BounceFunc      func(unit *board.Unit)
 	SetDefeatedFunc func(unit *board.Unit)
 	UnitsFunc       func() []*board.Unit
@@ -38,85 +38,75 @@ func (m mockPositionMap) Move(unit *board.Unit, territory board.Territory, stren
 	m.MoveFunc(unit, territory, strength)
 }
 
-func (m mockPositionMap) Bounce(unit *board.Unit) {
-	m.BounceFunc(unit)
-}
+func (m mockPositionMap) Hold(unit *board.Unit, strength int) { m.HoldFunc(unit, strength) }
 
-func (m mockPositionMap) SetDefeated(unit *board.Unit) {
-	m.SetDefeatedFunc(unit)
-}
+func (m mockPositionMap) Bounce(unit *board.Unit) { m.BounceFunc(unit) }
 
-func (m mockPositionMap) Units() []*board.Unit {
-	return m.UnitsFunc()
-}
+func (m mockPositionMap) SetDefeated(unit *board.Unit) { m.SetDefeatedFunc(unit) }
 
-func (m mockPositionMap) Conflict() []*board.Unit {
-	return m.ConflictFunc()
-}
+func (m mockPositionMap) Units() []*board.Unit { return m.UnitsFunc() }
 
-func TestOrderHandler_HandleMove(t *testing.T) {
+func (m mockPositionMap) Conflict() []*board.Unit { return m.ConflictFunc() }
+
+func TestMainPhaseHandler_ApplyOrders_HandleMove(t *testing.T) {
 	is := is.New(t)
-
-	h := game.MainPhaseHandler{
-
-		ArmyGraph: mockGraph{
-			IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-		},
-	}
-
-	set := order.Set{}
-
-	m1, err := order.Decode("A Bel-Hol")
-	is.NoErr(err)
-	mm1 := m1.(order.Move)
-	set.AddMove(mm1)
-	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: mm1.From}}}
-
+	move := order.Move{UnitType: board.Army, From: board.Territory{Abbr: "bel"}, To: board.Territory{Abbr: "hol"}}
+	set := order.Set{Moves: []order.Move{move}}
+	u := &board.Unit{PhaseHistory: []board.Position{{Territory: move.From}}}
 	act := call{}
 	positions := &mockPositionMap{
 		MoveFunc: func(unit *board.Unit, territory board.Territory, strength int) {
 			act.unit = unit
 			act.terr = territory
 		},
-		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1} },
+		UnitsFunc: func() []*board.Unit { return []*board.Unit{u} },
 	}
-
-	h.ApplyOrders(set, positions)
-	is.Equal(u1, act.unit)
-	is.Equal(mm1.To, act.terr)
+	handler.ApplyOrders(set, positions)
+	is.Equal(u, act.unit)
+	is.Equal(move.To, act.terr)
 }
 
-func TestOrderHandler_Handle_NotNeighbor_DoesNotCallMove(t *testing.T) {
+func TestMainPhaseHandler_ApplyOrders_HandleHoldStrength(t *testing.T) {
 	is := is.New(t)
 
-	var isNeighbourCalled bool
-
-	h := game.MainPhaseHandler{
-		ArmyGraph: mockGraph{
-			IsNeighbourFunc: func(t1, t2 string) (bool, error) { isNeighbourCalled = true; return false, nil },
-		},
+	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: vie, Cause: board.Added}}}
+	u2 := &board.Unit{PhaseHistory: []board.Position{{Territory: bud, Cause: board.Added}}}
+	orders := order.Set{}
+	h := order.Hold{At: bud}
+	orders.AddHold(h)
+	orders.AddHoldSupport(order.HoldSupport{Hold: h, By: vie})
+	var called bool
+	positionMap := &mockPositionMap{
+		HoldFunc:  func(unit *board.Unit, strength int) { called = true; is.Equal(1, strength) },
+		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1, u2} },
 	}
 
-	set := order.Set{}
+	handler.ApplyOrders(orders, positionMap)
+	is.True(called)
+}
 
-	m1, err := order.Decode("A Bel-Hol")
-	is.NoErr(err)
-	mm1 := m1.(order.Move)
-	set.AddMove(mm1)
+// newAddedUnit
+func newAddedUnit(terr board.Territory, cause int) *board.Unit {
+	return nil
+}
 
-	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: mm1.From}}}
-
+func TestMainPhaseHandler_ApplyOrders_DoesNotCallMoveWhenNotNeighbour(t *testing.T) {
+	is := is.New(t)
+	var isNeighbourCalled bool
+	notNeighbourHandler := game.MainPhaseHandler{ArmyGraph: mockGraph{
+		IsNeighbourFunc: func(t1, t2 string) (bool, error) { isNeighbourCalled = true; return false, nil }},
+	}
+	set := order.Set{Moves: []order.Move{{}}}
+	u := &board.Unit{}
 	positions := &mockPositionMap{
 		MoveFunc:  func(unit *board.Unit, territory board.Territory, strength int) { is.Fail("unexpected Move() call") },
-		UnitsFunc: func() []*board.Unit { return []*board.Unit{u1} },
+		UnitsFunc: func() []*board.Unit { return []*board.Unit{u} },
 	}
-
-	h.ApplyOrders(set, positions)
-
+	notNeighbourHandler.ApplyOrders(set, positions)
 	is.True(isNeighbourCalled)
 }
 
-func TestSet_Strength(t *testing.T) {
+func TestMainPhaseHandler_ApplyOrders_Strength(t *testing.T) {
 	is := is.New(t)
 
 	u1 := &board.Unit{PhaseHistory: []board.Position{{Territory: bud}}}
@@ -136,7 +126,7 @@ func TestSet_Strength(t *testing.T) {
 	handler.ApplyOrders(orders, positionMap)
 }
 
-func TestSet_Strength_WhenSupportIsCut(t *testing.T) {
+func TestMainPhaseHandler_ApplyOrders_Strength_WhenSupportIsCut(t *testing.T) {
 	// bud -> gal
 	// vie s bud -> gal
 	// boh -> vie
@@ -160,7 +150,7 @@ func TestSet_Strength_WhenSupportIsCut(t *testing.T) {
 	is.Equal(0, u1.Position().Strength)
 }
 
-func TestSet_Strength_WhenSupportIsCutByAttackedUnit(t *testing.T) {
+func TestMainPhaseHandler_ApplyOrders_Strength_WhenSupportIsCutByAttackedUnit(t *testing.T) {
 	// bud -> gal
 	// vie s bud -> gal
 	// gal -> vie

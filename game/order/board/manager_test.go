@@ -147,7 +147,7 @@ func TestPositionManager_AddUnit_UpdatesPhaseHistory(t *testing.T) {
 	u := &board.Unit{}
 	m := board.NewPositionManager()
 	m.AddUnit(u, terr)
-	is.Equal(board.Originated, u.PhaseHistory[0].Cause)
+	is.Equal(board.Added, u.PhaseHistory[0].Cause)
 	is.Equal(terr, u.PhaseHistory[0].Territory)
 }
 
@@ -158,4 +158,15 @@ func TestPositionManager_AddUnit_AddsToUnits(t *testing.T) {
 	m := board.NewPositionManager()
 	m.AddUnit(u, terr)
 	is.Equal(u, m.Units()[0])
+}
+
+func TestPositionManager_Hold(t *testing.T) {
+	is := is.New(t)
+	terr := board.Territory{Abbr: "terr"}
+	u := &board.Unit{}
+	m := board.NewPositionManager()
+	m.AddUnit(u, terr)
+	m.Hold(u, 3)
+	is.Equal(board.Held, u.Position().Cause)
+	is.Equal(terr, u.Position().Territory)
 }

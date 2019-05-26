@@ -12,119 +12,119 @@ import (
 	"github.com/burrbd/dip/game/order/board"
 )
 
-var cases = []orderCase{
+var specs = []spec{
 	{
 		description: "given a unit moves unchallenged, then unit changes territory",
-		orders: []*orderResult{
-			{order: "A Bud-Vie", result: "vie"},
+		orders: []*result{
+			{order: "A Bud-Vie", position: "vie"},
 		},
 	},
 	{
 		description: "given two units attack same territory without support, then neither unit wins territory",
-		orders: []*orderResult{
-			{order: "A Bud-Vie", result: "bud"},
-			{order: "A Gal-Vie", result: "gal"},
+		orders: []*result{
+			{order: "A Bud-Vie", position: "bud"},
+			{order: "A Gal-Vie", position: "gal"},
 		},
 	},
 	{
 		description: "given units attack in circular chain without support, then all attacking units bounce back",
-		orders: []*orderResult{
-			{order: "A Bud-Gal", result: "bud"},
-			{order: "A Gal-Vie", result: "gal"},
-			{order: "A Vie H", result: "vie"},
+		orders: []*result{
+			{order: "A Bud-Gal", position: "bud"},
+			{order: "A Gal-Vie", position: "gal"},
+			{order: "A Vie H", position: "vie"},
 		},
 	},
 	{
 		description: "given two units attack an empty territory, then supported attack wins",
-		orders: []*orderResult{
-			{order: "A Gal-Vie", result: "vie"},
-			{order: "A Boh S A Gal-Vie", result: "boh"},
-			{order: "A Bud-Vie", result: "bud"},
+		orders: []*result{
+			{order: "A Gal-Vie", position: "vie"},
+			{order: "A Boh S A Gal-Vie", position: "boh"},
+			{order: "A Bud-Vie", position: "bud"},
 		},
 	},
 	{
 		description: "given two units attack an empty territory, then unit with greatest support wins",
-		orders: []*orderResult{
-			{order: "A Gal-Vie", result: "vie"},
-			{order: "A Boh S A Gal-Vie", result: "boh"},
-			{order: "A Tri S A Gal-Vie", result: "tri"},
-			{order: "A Bud-Vie", result: "bud"},
-			{order: "A Tyr S A Bud-Vie", result: "tyr"},
+		orders: []*result{
+			{order: "A Gal-Vie", position: "vie"},
+			{order: "A Boh S A Gal-Vie", position: "boh"},
+			{order: "A Tri S A Gal-Vie", position: "tri"},
+			{order: "A Bud-Vie", position: "bud"},
+			{order: "A Tyr S A Bud-Vie", position: "tyr"},
 		},
 	},
 	{
 		description: "given unit holds territory, then unit remains on territory",
-		orders: []*orderResult{
-			{order: "A Vie H", result: "vie"},
+		orders: []*result{
+			{order: "A Vie H", position: "vie"},
 		},
 	},
 	{
 		description: "given unit attacks territory and defending territory attacks support, " +
 			"then attacking unit still wins",
-		orders: []*orderResult{
-			{order: "A Gal-Vie", result: "vie"},
-			{order: "A Boh S A Gal-Vie", result: "boh"},
-			{order: "A Vie-Boh", result: "vie", defeated: true},
+		orders: []*result{
+			{order: "A Gal-Vie", position: "vie"},
+			{order: "A Boh S A Gal-Vie", position: "boh"},
+			{order: "A Vie-Boh", position: "vie", defeated: true},
 		},
 	},
 	{
 		description: "given two units attack each other (counterattack), then both units bounce",
-		orders: []*orderResult{
-			{order: "A Vie-Bud", result: "vie"},
-			{order: "A Bud-Vie", result: "bud"},
+		orders: []*result{
+			{order: "A Vie-Bud", position: "vie"},
+			{order: "A Bud-Vie", position: "bud"},
 		},
 	},
 	{
 		description: "given a counterattack, and another attacks one counterattack party," +
 			"then all units bounce",
-		orders: []*orderResult{
-			{order: "A Vie-Bud", result: "vie"},
-			{order: "A Bud-Vie", result: "bud"},
-			{order: "A Boh-Vie", result: "boh"},
+		orders: []*result{
+			{order: "A Vie-Bud", position: "vie"},
+			{order: "A Bud-Vie", position: "bud"},
+			{order: "A Boh-Vie", position: "boh"},
 		},
 	},
 	{
 		description: "given a counterattack, and another unit attacks one counterattack party with support, " +
 			"then supported unit wins",
-		orders: []*orderResult{
-			{order: "A Vie-Bud", result: "vie", defeated: true},
-			{order: "A Bud-Vie", result: "bud"},
-			{order: "A Boh-Vie", result: "vie"},
-			{order: "A Tyr S A Boh-Vie", result: "tyr"},
+		orders: []*result{
+			{order: "A Vie-Bud", position: "vie", defeated: true},
+			{order: "A Bud-Vie", position: "bud"},
+			{order: "A Boh-Vie", position: "vie"},
+			{order: "A Tyr S A Boh-Vie", position: "tyr"},
 		},
 	},
 	{
 		description: "given a counterattack and a supported second attack, where one counterattack party has support, " +
 			"then all units bounce",
-		orders: []*orderResult{
-			{order: "A Vie-Bud", result: "vie"},
-			{order: "A Bud-Vie", result: "bud"},
-			{order: "A Sil S A Bud-Vie", result: "sil"},
-			{order: "A Boh-Vie", result: "boh"},
-			{order: "A Tyr S A Boh-Vie", result: "tyr"},
+		orders: []*result{
+			{order: "A Vie-Bud", position: "vie"},
+			{order: "A Bud-Vie", position: "bud"},
+			{order: "A Sil S A Bud-Vie", position: "sil"},
+			{order: "A Boh-Vie", position: "boh"},
+			{order: "A Tyr S A Boh-Vie", position: "tyr"},
 		},
 	},
 	{
 		description: "given a unit holds and another unit supports holding unit," +
 			"then both units remain in position",
-		orders: []*orderResult{
-			{order: "A Vie H", result: "vie"},
-			{order: "A Bud S A Vie", result: "bud"},
+		orders: []*result{
+			{order: "A Vie H", position: "vie"},
+			{order: "A Bud S A Vie", position: "bud"},
 		},
 	},
 }
 
-type orderResult struct {
+type result struct {
 	order    string
-	result   string
+	position string
 	defeated bool
 	unit     *board.Unit
 }
 
-type orderCase struct {
+type spec struct {
 	description string
 	givenMap    []string
-	orders      []*orderResult
+	orders      []*result
 	focus       bool
 }
 
@@ -134,66 +134,64 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
 	}
 
-	focused := focusedCases(cases)
-	if len(focused) > 0 {
-		cases = focused
-	}
+	for _, spec := range filter(specs) {
+		t.Run(spec.description, func(t *testing.T) {
+			logTableHeading(t)
+			positionManager := board.NewPositionManager()
 
-	for i, orderCase := range cases {
-		positionManager := board.NewPositionManager()
+			orders := order.Set{}
 
-		logTableHeading(t, orderCase.description, i)
+			for _, result := range spec.orders {
+				o, err := order.Decode(result.order)
+				is.NoErr(err)
+				var terr board.Territory
+				switch v := o.(type) {
+				case order.Move:
+					terr = v.From
+					orders.AddMove(v)
+				case order.Hold:
+					terr = v.At
+					orders.AddHold(v)
+				case order.MoveSupport:
+					terr = v.By
+					orders.AddMoveSupport(v)
+				case order.HoldSupport:
+					terr = v.By
+					orders.AddHoldSupport(v)
+				case order.MoveConvoy:
+					terr = v.By
+					orders.AddMoveConvoy(v)
+				}
 
-		orders := order.Set{}
-
-		for _, orderResult := range orderCase.orders {
-			o, err := order.Decode(orderResult.order)
-			is.NoErr(err)
-			var terr board.Territory
-			switch v := o.(type) {
-			case order.Move:
-				terr = v.From
-				orders.AddMove(v)
-			case order.Hold:
-				terr = v.At
-				orders.AddHold(v)
-			case order.MoveSupport:
-				terr = v.By
-				orders.AddMoveSupport(v)
-			case order.HoldSupport:
-				terr = v.By
-				orders.AddHoldSupport(v)
-			case order.MoveConvoy:
-				terr = v.By
-				orders.AddMoveConvoy(v)
+				u := &board.Unit{}
+				positionManager.AddUnit(u, terr)
+				result.unit = u
 			}
 
-			u := &board.Unit{}
-			positionManager.AddUnit(u, terr)
+			orderHandler := game.MainPhaseHandler{ArmyGraph: graph}
+			orderHandler.ApplyOrders(orders, positionManager)
+			orderHandler.ResolveOrders(positionManager)
 
-			orderResult.unit = u
-			logTableRow(t, *orderResult)
-		}
-
-		orderHandler := game.MainPhaseHandler{ArmyGraph: graph}
-		orderHandler.ApplyOrders(orders, positionManager)
-		orderHandler.ResolveOrders(positionManager)
-
-		for _, orderResult := range orderCase.orders {
-			is.NotNil(orderResult.unit)
-			is.Equal(orderResult.defeated, orderResult.unit.Defeated())
-			is.Equal(orderResult.result, orderResult.unit.Position().Territory.Abbr)
-		}
-		is.Equal(len(orderCase.orders), len(positionManager.Units()))
+			for _, result := range spec.orders {
+				logTableRow(t, *result)
+				is.NotNil(result.unit)
+				is.Equal(result.defeated, result.unit.Defeated())
+				is.Equal(result.position, result.unit.Position().Territory.Abbr)
+			}
+			is.Equal(len(spec.orders), len(positionManager.Units()))
+		})
 	}
 }
 
-func focusedCases(cases []orderCase) []orderCase {
-	focused := make([]orderCase, 0)
-	for _, c := range cases {
+func filter(specs []spec) []spec {
+	focused := make([]spec, 0)
+	for _, c := range specs {
 		if c.focus {
 			focused = append(focused, c)
 		}
+	}
+	if len(focused) == 0 {
+		return specs
 	}
 	return focused
 }
@@ -214,21 +212,16 @@ func (g mockGraph) IsNeighbour(t1, t2 string) (bool, error) {
 	return g.IsNeighbourFunc(t1, t2)
 }
 
-func logTableHeading(t *testing.T, desc string, i int) {
-	if i != 0 {
-		t.Log("")
-	}
-	t.Log(desc)
-	t.Log("")
+func logTableHeading(t *testing.T) {
 	t.Log("  | order             | result | defeated |")
 	t.Log("  +---------------------------------------+")
 }
 
-func logTableRow(t *testing.T, o orderResult) {
+func logTableRow(t *testing.T, o result) {
 	t.Logf("  | %s%s| %s    | %t%s|",
 		o.order,
 		strings.Repeat(" ", 18-len(o.order)),
-		o.result,
+		o.position,
 		o.defeated,
 		strings.Repeat(" ", 9-len(fmt.Sprintf("%t", o.defeated))))
 }

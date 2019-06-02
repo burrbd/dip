@@ -2,10 +2,6 @@ package order
 
 import "github.com/burrbd/dip/game/order/board"
 
-type UnitMatcher interface {
-	Match(board.Manager) *board.Unit
-}
-
 type Move struct {
 	Country  string
 	UnitType board.UnitType

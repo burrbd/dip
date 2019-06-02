@@ -178,17 +178,18 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 				result.unit = u
 			}
 
-			orderHandler := game.MainPhaseHandler{ArmyGraph: graph}
+			matcher := order.PositionMatcher{ArmyGraph: graph}
+			orderHandler := game.OrderHandler{Matcher: matcher}
 			orderHandler.ApplyOrders(orders, positionManager)
-			orderHandler.ResolveOrders(positionManager)
+			game.ResolveOrders(positionManager)
 
 			for _, result := range spec.orders {
 				logTableRow(t, *result)
 				is.NotNil(result.unit)
-				is.Equal(result.defeated, result.unit.Defeated())
-				is.Equal(result.position, result.unit.Position().Territory.Abbr)
+				is.Equal(result.defeated, positionManager.Defeated(result.unit))
+				is.Equal(result.position, positionManager.Position(result.unit).Territory.Abbr)
 			}
-			is.Equal(len(spec.orders), len(positionManager.Units()))
+			is.Equal(len(spec.orders), len(positionManager.Positions()))
 		})
 	}
 }

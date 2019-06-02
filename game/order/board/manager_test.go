@@ -7,166 +7,218 @@ import (
 	"github.com/cheekybits/is"
 )
 
-func TestPositionManager_Move_UpdatesPosition(t *testing.T) {
+func TestPositionManager_Position(t *testing.T) {
 	is := is.New(t)
-	prev := board.Territory{Abbr: "prev"}
-	next := board.Territory{Abbr: "next"}
+	m := board.NewPositionManager()
+	terr := board.Territory{Abbr: "t1"}
 	u := &board.Unit{}
-	m := board.NewPositionManager()
-	m.AddUnit(u, prev)
-	m.Move(u, next, 0)
-	is.Equal(prev, u.PrevPosition().Territory)
-	is.Equal(next, u.Position().Territory)
+
+	m.AddUnit(u, terr)
+
+	is.Equal(terr, m.Position(u).Territory)
 }
 
-func TestPositionManager_Conflict(t *testing.T) {
+func TestPositionManager_Positions(t *testing.T) {
 	is := is.New(t)
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
 	m := board.NewPositionManager()
-	m.AddUnit(u1, board.Territory{Abbr: "t1"})
-	m.AddUnit(u2, board.Territory{Abbr: "t1"})
-	conflicts := m.Conflict()
-	is.Equal(2, len(conflicts))
-}
-
-func TestPositionManager_ConflictOnlyWhenInSameTerritory(t *testing.T) {
-	is := is.New(t)
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
-	u3 := &board.Unit{}
-	m := board.NewPositionManager()
-	m.AddUnit(u1, board.Territory{Abbr: "t1"})
-	m.AddUnit(u2, board.Territory{Abbr: "t1"})
-	m.AddUnit(u3, board.Territory{Abbr: "t2"})
-	is.Equal(2, len(m.Conflict()))
-	for _, u := range m.Conflict() {
-		if u != u1 && u != u2 {
-			is.Failf("%v not expected in conflict")
-		}
-	}
-}
-
-func TestPositionManager_Conflict_CounterAttackCausesConflict(t *testing.T) {
-	is := is.New(t)
 	t1 := board.Territory{Abbr: "t1"}
 	t2 := board.Territory{Abbr: "t2"}
 	u1 := &board.Unit{}
 	u2 := &board.Unit{}
-	m := board.NewPositionManager()
 	m.AddUnit(u1, t1)
 	m.AddUnit(u2, t2)
-	m.Move(u1, t2, 0)
-	m.Move(u2, t1, 0)
-	is.Equal(2, len(m.Conflict()))
-	for _, u := range m.Conflict() {
-		if u != u1 && u != u2 {
-			is.Failf("%v expected in conflict")
-		}
+
+	positions := m.Positions()
+
+	is.Equal(2, len(positions))
+	is.Equal("t1", positions[u1].Territory.Abbr)
+	is.Equal("t2", positions[u2].Territory.Abbr)
+}
+
+func TestPositionManager_Conflict(t *testing.T) {
+	is := is.New(t)
+
+	specs := []struct {
+		desc                string
+		positions           []unitPositionInstruction
+		conflictedUnits     int
+		conflictedTerritory string
+	}{
+		{
+			desc:            "1 unit",
+			positions:       units(add(with(board.Added, "a_terr"))),
+			conflictedUnits: 0,
+		},
+		{
+			desc: "2 units on different territory",
+			positions: units(
+				add(with(board.Added, "a_terr")),
+				add(with(board.Added, "b_terr"))),
+			conflictedUnits: 0,
+		},
+		{
+			desc: "2 units on same territory",
+			positions: units(
+				add(with(board.Added, "a_terr")),
+				add(with(board.Added, "a_terr"))),
+			conflictedUnits:     2,
+			conflictedTerritory: "a_terr",
+		},
+		{
+			desc: "3 units on same territory",
+			positions: units(
+				add(with(board.Added, "a_terr")),
+				add(with(board.Added, "a_terr")),
+				add(with(board.Added, "a_terr"))),
+			conflictedUnits:     3,
+			conflictedTerritory: "a_terr",
+		},
+		{
+			desc: "2 units on same territory, 1 unit different",
+			positions: units(
+				add(with(board.Added, "b_terr")),
+				add(with(board.Added, "a_terr")),
+				add(with(board.Added, "b_terr"))),
+			conflictedUnits:     2,
+			conflictedTerritory: "b_terr",
+		},
+		{
+			desc: "2 units move to same territory",
+			positions: units(
+				add(with(board.Added, "b_terr"), with(board.Moved, "c_terr", 0)),
+				add(with(board.Added, "a_terr"), with(board.Moved, "c_terr", 0))),
+			conflictedUnits:     2,
+			conflictedTerritory: "c_terr",
+		},
+		{
+			desc: "2 units move into each other's territory",
+			positions: units(
+				add(with(board.Added, "a_terr"), with(board.Moved, "b_terr", 0)),
+				add(with(board.Added, "b_terr"), with(board.Moved, "a_terr", 0))),
+			conflictedUnits: 2,
+		},
+		{
+			desc: "2 units in same territory, 1 unit defeated",
+			positions: units(
+				add(with(board.Added, "a_terr"), with(board.Moved, "b_terr", 0)),
+				add(with(board.Added, "b_terr"), with(board.Defeated, "b_terr", 0))),
+			conflictedUnits: 0,
+		},
+	}
+
+	for _, spec := range specs {
+		m := board.NewPositionManager()
+		t.Run(spec.desc, func(t *testing.T) {
+			for _, unitPositions := range spec.positions {
+				u := &board.Unit{}
+				for _, position := range unitPositions {
+					switch position[0] {
+					case board.Added:
+						m.AddUnit(u, board.Territory{Abbr: position[1].(string)})
+					case board.Moved:
+						m.Move(u, board.Territory{Abbr: position[1].(string)}, 0)
+					case board.Defeated:
+						m.SetDefeated(u)
+					}
+				}
+			}
+			conflicts := m.Conflict()
+			is.Equal(spec.conflictedUnits, len(conflicts))
+			if spec.conflictedTerritory != "" {
+				for _, unit := range conflicts {
+					is.Equal(spec.conflictedTerritory, m.Position(unit).Territory.Abbr)
+				}
+			}
+		})
 	}
 }
 
-func TestPositionManager_Bounce_RemovesCounterAttackConflict(t *testing.T) {
-	is := is.New(t)
-	a := board.Territory{Abbr: "a"}
-	b := board.Territory{Abbr: "b"}
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
-	m := board.NewPositionManager()
-	m.AddUnit(u1, a)
-	m.AddUnit(u2, b)
-	m.Move(u1, b, 0)
-	m.Move(u2, a, 0)
-	is.Equal(2, len(m.Conflict()))
-	m.Bounce(u1)
-	m.Bounce(u2)
-	is.Equal(0, len(m.Conflict()))
-}
-
-func TestPositionManager_Units(t *testing.T) {
-	is := is.New(t)
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
-	u3 := &board.Unit{}
-	m := board.NewPositionManager()
-	m.AddUnit(u1, board.Territory{Abbr: "terr1"})
-	m.AddUnit(u2, board.Territory{Abbr: "terr2"})
-	m.AddUnit(u3, board.Territory{Abbr: "terr3"})
-	for _, u := range m.Units() {
-		if u != u1 && u != u2 && u != u3 {
-			is.Failf("%v not found in all units", u)
-		}
-	}
-}
-
-func TestPositionManager_Move_DoesntChangeNumberOfUnits(t *testing.T) {
-	is := is.New(t)
-	u1 := &board.Unit{}
-	m := board.NewPositionManager()
-	m.AddUnit(u1, board.Territory{Abbr: "a-terr"})
-	m.Move(u1, board.Territory{Abbr: "b-terr"}, 0)
-	is.Equal(1, len(m.Units()))
-}
-
-func TestPositionManager_Bounce_DoesntChangeReturnedConflictSlice(t *testing.T) {
-	is := is.New(t)
-	terr := board.Territory{Abbr: "a terr"}
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
-	m := board.NewPositionManager()
-	m.AddUnit(u1, terr)
-	m.AddUnit(u2, terr)
-	conflicts := m.Conflict()
-	is.Equal(2, len(conflicts))
-	m.Bounce(conflicts[0])
-	is.NotNil(conflicts[0])
-	is.NotNil(conflicts[1])
-}
-
-func TestPositionManager_Bounce_DoesntChangeReturnedConflictsSliceWhenCounterAttack(t *testing.T) {
-	is := is.New(t)
-	a := board.Territory{Abbr: "a-terr"}
-	b := board.Territory{Abbr: "b-terr"}
-	u1 := &board.Unit{}
-	u2 := &board.Unit{}
-	m := board.NewPositionManager()
-	m.AddUnit(u1, a)
-	m.AddUnit(u2, b)
-	m.Move(u1, b, 0)
-	m.Move(u2, a, 0)
-	conflicts := m.Conflict()
-	is.Equal(2, len(conflicts))
-	m.Bounce(conflicts[0])
-	is.NotNil(conflicts[0])
-	is.NotNil(conflicts[1])
-}
-
-func TestPositionManager_AddUnit_UpdatesPhaseHistory(t *testing.T) {
+func TestPositionManager_AddUnit(t *testing.T) {
 	is := is.New(t)
 	terr := board.Territory{Abbr: "terr"}
 	u := &board.Unit{}
 	m := board.NewPositionManager()
 	m.AddUnit(u, terr)
-	is.Equal(board.Added, u.PhaseHistory[0].Cause)
-	is.Equal(terr, u.PhaseHistory[0].Territory)
+	is.Equal(board.Added, m.Position(u).Cause)
+	is.Equal(terr, m.Position(u).Territory)
+	is.Equal(0, m.Position(u).Strength)
 }
 
-func TestPositionManager_AddUnit_AddsToUnits(t *testing.T) {
+func TestPositionManager_Move(t *testing.T) {
 	is := is.New(t)
-	terr := board.Territory{Abbr: "terr"}
-	u := &board.Unit{}
 	m := board.NewPositionManager()
-	m.AddUnit(u, terr)
-	is.Equal(u, m.Units()[0])
+	t1 := board.Territory{Abbr: "t1"}
+	t2 := board.Territory{Abbr: "t2"}
+	u := &board.Unit{}
+	m.AddUnit(u, t1)
+	m.Move(u, t2, 1)
+
+	is.Equal(t2, m.Position(u).Territory)
+	is.Equal(board.Moved, m.Position(u).Cause)
+	is.Equal(1, m.Position(u).Strength)
 }
 
 func TestPositionManager_Hold(t *testing.T) {
 	is := is.New(t)
+	m := board.NewPositionManager()
+	ter := board.Territory{Abbr: "t"}
+	u := &board.Unit{}
+	m.AddUnit(u, ter)
+
+	m.Hold(u, 2)
+
+	is.Equal(ter, m.Position(u).Territory)
+	is.Equal(board.Held, m.Position(u).Cause)
+	is.Equal(2, m.Position(u).Strength)
+}
+
+func TestManager_Bounce(t *testing.T) {
+	is := is.New(t)
+
+	m := board.NewPositionManager()
+
+	t1 := board.Territory{Abbr: "t1"}
+	t2 := board.Territory{Abbr: "t2"}
+	u := &board.Unit{}
+	m.AddUnit(u, t1)
+
+	is.Equal(t1, m.Position(u).Territory)
+	is.Equal(board.Added, m.Position(u).Cause)
+
+	m.Move(u, t2, 1)
+	m.Bounce(u)
+
+	is.Equal(t1, m.Position(u).Territory)
+	is.Equal(board.Bounced, m.Position(u).Cause)
+	is.Equal(0, m.Position(u).Strength)
+}
+
+func TestManager_SetDefeated(t *testing.T) {
+	is := is.New(t)
+	m := board.NewPositionManager()
 	terr := board.Territory{Abbr: "terr"}
 	u := &board.Unit{}
-	m := board.NewPositionManager()
 	m.AddUnit(u, terr)
-	m.Hold(u, 3)
-	is.Equal(board.Held, u.Position().Cause)
-	is.Equal(terr, u.Position().Territory)
+
+	m.SetDefeated(u)
+
+	is.Equal(terr, m.Position(u).Territory)
+	is.Equal(board.Defeated, m.Position(u).Cause)
+	is.Equal(0, m.Position(u).Strength)
+}
+
+func with(position ...interface{}) positionInstruction {
+	return position
+}
+
+type positionInstruction []interface{}
+
+func add(positions ...positionInstruction) []positionInstruction {
+	return positions
+}
+
+type unitPositionInstruction []positionInstruction
+
+func units(positions ...unitPositionInstruction) []unitPositionInstruction {
+	return positions
 }

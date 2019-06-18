@@ -72,12 +72,11 @@ func (m PositionManager) Positions() map[*Unit]Position {
 // Conflict returns the first conflict found on the board
 func (m PositionManager) Conflict() []*Unit {
 	conflicts := make(map[string][]*Unit)
-	for u := range m.history {
-		position, prevPosition := m.Position(u), m.prevPosition(u)
+	for u, position := range m.Positions() {
 		if position.Cause == Defeated {
 			continue
 		}
-		if position.Cause == Moved && prevPosition != nil {
+		if position.Cause == Moved {
 			conflicts = m.appendCounterAttackConflict(conflicts, u)
 		}
 		conflicts = m.appendTerritoryConflict(conflicts, u)

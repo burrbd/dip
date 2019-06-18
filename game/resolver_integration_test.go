@@ -133,7 +133,6 @@ type result struct {
 
 type spec struct {
 	description string
-	givenMap    []string
 	orders      []*result
 	focus       bool
 }

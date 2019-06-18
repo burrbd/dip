@@ -13,16 +13,18 @@ func ResolveOrders(manager board.Manager) {
 		if units == nil {
 			return
 		}
-		var mustLose bool
+		var defeated bool
 		sort.Sort(UnitPositionsByStrength(manager, units))
 		if manager.Position(units[0]).Strength > manager.Position(units[1]).Strength {
-			units, mustLose = units[1:], true
+			units = units[1:]
+			defeated = true
 		}
 		for _, u := range units {
-			if !manager.AtOrigin(u) {
-				manager.Bounce(u)
-			} else if mustLose {
+			atOrigin := manager.AtOrigin(u)
+			if atOrigin && defeated {
 				manager.SetDefeated(u)
+			} else if !atOrigin {
+				manager.Bounce(u)
 			}
 		}
 	}

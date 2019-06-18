@@ -96,25 +96,18 @@ func (m PositionManager) Move(u *Unit, to Territory, strength int) {
 
 // Hold holds the unit in the current position
 func (m PositionManager) Hold(u *Unit, strength int) {
-	curr := m.Position(u)
-	m.history[u] = append(m.history[u], Position{Territory: curr.Territory, Cause: Held, Strength: strength})
+	m.history[u] = append(m.history[u], Position{Territory: m.Position(u).Territory, Cause: Held, Strength: strength})
 }
 
 // Bounce bounces two or more units when there is no winner
 func (m PositionManager) Bounce(u *Unit) {
-	// TODO: verify that checking the cause matters
-	prev := m.prevPosition(u)
-	if prev == nil || prev.Cause == Held {
-		return
-	}
 	m.history[u] = append(m.history[u], Position{
-		Territory: prev.Territory, Strength: 0, Cause: Bounced})
+		Territory: m.prevPosition(u).Territory, Strength: 0, Cause: Bounced})
 }
 
 // SetDefeated sets a unit's position as defeated
 func (m PositionManager) SetDefeated(u *Unit) {
-	curr := m.Position(u)
-	m.history[u] = append(m.history[u], Position{Territory: curr.Territory, Cause: Defeated})
+	m.history[u] = append(m.history[u], Position{Territory: m.Position(u).Territory, Cause: Defeated})
 }
 
 // Position returns the current board position of a unit

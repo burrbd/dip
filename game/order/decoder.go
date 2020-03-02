@@ -112,6 +112,6 @@ func unitType(unitToken string) (board.UnitType, error) {
 	case n == 1 && unitToken[0] == 'a':
 		return board.Army, nil
 	default:
-		return board.UnitType('?'), fmt.Errorf("invalid unit type: %s", string(unitToken))
+		return board.UnitType(""), fmt.Errorf("invalid unit type: %s", unitToken)
 	}
 }

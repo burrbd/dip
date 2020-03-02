@@ -29,6 +29,22 @@ func TestDecode_FleetMove(t *testing.T) {
 	is.Equal(order.Move{UnitType: board.Fleet, From: abc, To: def}, decMove)
 }
 
+func TestDecode_Move_Errors(t *testing.T) {
+	t.Run("invalid unit type", func(t *testing.T) {
+		is := is.New(t)
+		move := "Z Abc-Def"
+		_, err := order.Decode(move)
+		is.Err(err)
+	})
+
+	t.Run("hyphen split error", func(t *testing.T) {
+		is := is.New(t)
+		move := "A Abc-Def-Ghi"
+		_, err := order.Decode(move)
+		is.Err(err)
+	})
+}
+
 func TestDecode_SupportMove(t *testing.T) {
 	is := is.New(t)
 	support := "A Ghi S A Abc-Def"
@@ -53,6 +69,29 @@ func TestDecode_SupportMoveWithFleet(t *testing.T) {
 	is.Equal(expSupport, decSupport)
 }
 
+func TestDecode_Support_Errors(t *testing.T) {
+	t.Run("invalid unit type", func(t *testing.T) {
+		is := is.New(t)
+		support := "& Ghi S A Abc"
+		_, err := order.Decode(support)
+		is.Err(err)
+	})
+
+	t.Run("invalid move unit type", func(t *testing.T) {
+		is := is.New(t)
+		support := "F Ghi S & Abc-Def"
+		_, err := order.Decode(support)
+		is.Err(err)
+	})
+
+	t.Run("invalid hold unit type", func(t *testing.T) {
+		is := is.New(t)
+		support := "F Ghi S & Abc"
+		_, err := order.Decode(support)
+		is.Err(err)
+	})
+}
+
 func TestDecode_ConvoyMove(t *testing.T) {
 	is := is.New(t)
 	convoy := "F Ghi C A Abc-Def"
@@ -64,11 +103,21 @@ func TestDecode_ConvoyMove(t *testing.T) {
 	is.Equal(expSupport, decSupport)
 }
 
-func TestDecode_ConvoyMoveWithArmyReturnsError(t *testing.T) {
-	is := is.New(t)
-	convoy := "A Ghi C A Abc-Def"
-	_, err := order.Decode(convoy)
-	is.Err(err)
+func TestDecode_ConvoyMove_Errors(t *testing.T) {
+	t.Run("convoy with invalid unit type", func(t *testing.T) {
+		is := is.New(t)
+		convoy := "& Ghi C A Abc-Def"
+		_, err := order.Decode(convoy)
+		is.Err(err)
+	})
+
+	t.Run("convoy invalid move", func(t *testing.T) {
+		is := is.New(t)
+		convoy := "F Ghi C & Abc-Def"
+		_, err := order.Decode(convoy)
+		is.Err(err)
+	})
+
 }
 
 func TestDecode_Hold(t *testing.T) {
@@ -82,12 +131,22 @@ func TestDecode_Hold(t *testing.T) {
 	is.Equal(expHold, decHold)
 }
 
-func TestDecode_Hold_WithWrongHoldToken(t *testing.T) {
-	is := is.New(t)
-	hold := "A Abc s"
-	_, err := order.Decode(hold)
-	is.Err(err)
+func TestDecode_Hold_Errors(t *testing.T) {
+	t.Run("with wrong hold token", func(t *testing.T) {
+		is := is.New(t)
+		hold := "A Abc s"
+		_, err := order.Decode(hold)
+		is.Err(err)
+	})
+
+	t.Run("invalid unit type", func(t *testing.T) {
+		is := is.New(t)
+		move := "Z Abc H"
+		_, err := order.Decode(move)
+		is.Err(err)
+	})
 }
+
 func TestDecode_SupportUnitHold(t *testing.T) {
 	is := is.New(t)
 	support := "A Ghi S A Abc"

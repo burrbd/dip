@@ -29,6 +29,7 @@ type Hold struct {
 }
 
 type HoldSupport struct {
+	Country  string
 	UnitType board.UnitType
 	By       board.Territory
 	Hold     Hold

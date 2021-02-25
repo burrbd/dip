@@ -43,7 +43,7 @@ func CreateArmyGraph() *simple.UndirectedGraph {
 
 func LookupTerritory(abbr string) Territory {
 	for _, terr := range armyTerritories {
-		if strings.ToUpper(abbr) == terr.Abbr {
+		if strings.ToLower(abbr) == terr.Abbr {
 			return terr
 		}
 	}
@@ -51,60 +51,60 @@ func LookupTerritory(abbr string) Territory {
 }
 
 var armyTerritories = []Territory{
-	Territory{id: 0, Name: "Albania", Abbr: "ALB", edges: []string{"GRE", "SER", "TRI"}},                               //	Balkans
-	Territory{id: 1, Name: "Ankara", Abbr: "ANK", edges: []string{"ARM", "CON", "SMY"}},                                //	TurkeyTRUE
-	Territory{id: 2, Name: "Apulia", Abbr: "APU", edges: []string{"NAP", "ROM", "VEN"}},                                //	Italy
-	Territory{id: 3, Name: "Armenia", Abbr: "ARM", edges: []string{"SEV", "SMY", "SYR"}},                               //	Turkey
-	Territory{id: 4, Name: "Belgium", Abbr: "BEL", edges: []string{"BUR", "HOL", "PIC", "RUR"}},                        //	Low Countries	TRUE
-	Territory{id: 5, Name: "Berlin", Abbr: "BER", edges: []string{"KIE", "MUN", "PRU", "SIL"}},                         //	GermanyTRUE
-	Territory{id: 6, Name: "Bohemia", Abbr: "BOH", edges: []string{"GAL", "MUN", "SIL", "TYR"}},                        //	Austria
-	Territory{id: 7, Name: "Brest", Abbr: "BRE", edges: []string{"GAS", "PAR", "PIC"}},                                 //	FranceTRUE
-	Territory{id: 8, Name: "Budapest", Abbr: "BUD", edges: []string{"GAL", "RUM", "SER", "TRI", "VIE"}},                //	AustriaTRUE
-	Territory{id: 9, Name: "Bulgaria", Abbr: "BUL", edges: []string{"CON", "GRE", "RUM", "SER"}},                       //	BalkansTRUE
-	Territory{id: 10, Name: "Burgundy", Abbr: "BUR", edges: []string{"BEL", "GAS", "MAR", "MUN", "PAR", "PIC", "RUH"}}, //	France
-	Territory{id: 11, Name: "Clyde", Abbr: "CLY", edges: []string{"EDI", "LVP"}},                                       //	England
-	Territory{id: 12, Name: "Constantinople", Abbr: "CON", edges: []string{"SMY", "ANK", "BUL"}},                       //	TurkeyTRUE
-	Territory{id: 13, Name: "Denmark", Abbr: "DEN", edges: []string{"KIE", "SWE"}},                                     //	ScandinaviaTRUE
-	Territory{id: 14, Name: "Edinburgh", Abbr: "EDI", edges: []string{"LVP", "YOR", "CLY"}},                            //	EnglandTRUE
-	Territory{id: 15, Name: "Finland", Abbr: "FIN", edges: []string{"NWY", "STP", "SWE"}},                              //	Russia
-	Territory{id: 16, Name: "Galacia", Abbr: "GAL", edges: []string{"RUM", "SIL", "UKR", "VIE", "WAR", "BOH", "BUD"}},  //	Austria
-	Territory{id: 17, Name: "Gascony", Abbr: "GAS", edges: []string{"MAR", "PAR", "SPA", "BRE", "BUR"}},                //	France
-	Territory{id: 18, Name: "Greece", Abbr: "GRE", edges: []string{"SER", "ALB", "BUL"}},                               //	BalkansTRUE
-	Territory{id: 19, Name: "Holland", Abbr: "HOL", edges: []string{"KIE", "RUH", "BEL"}},                              //	Low Countries	TRUE
-	Territory{id: 20, Name: "Kiel", Abbr: "KIE", edges: []string{"MUN", "RUH", "BER", "DEN", "HOL"}},                   //	GermanyTRUE
-	Territory{id: 21, Name: "Liverpool", Abbr: "LVP", edges: []string{"WAL", "YOR", "CLY", "EDI"}},                     // or LPL	EnglandTRUE
-	Territory{id: 22, Name: "Livonia", Abbr: "LVN", edges: []string{"MOS", "PRU", "STP", "WAR"}},                       // or LVA	Russia
-	Territory{id: 23, Name: "London", Abbr: "LON", edges: []string{"WAL", "YOR"}},                                      //	EnglandTRUE
-	Territory{id: 24, Name: "Marseilles", Abbr: "MAR", edges: []string{"PIE", "SPA", "BUR", "GAS"}},                    //	FranceTRUE
-	Territory{id: 25, Name: "Moscow", Abbr: "MOS", edges: []string{"SEV", "STP", "URK", "WAR", "LVN"}},                 //	RussiaTRUE
-	Territory{id: 26, Name: "Munich", Abbr: "MUN", edges: []string{"RUH", "SIL", "TYR", "BER", "BOH", "BUR", "KIE"}},   //	GermanyTRUE
-	Territory{id: 27, Name: "Naples", Abbr: "NAP", edges: []string{"ROM", "APU"}},                                      //	ItalyTRUE
-	Territory{id: 28, Name: "North Africa", Abbr: "NAF", edges: []string{"TUN"}},                                       //	Africa
-	Territory{id: 29, Name: "Norway", Abbr: "NWY", edges: []string{"STP", "SWE", "FIN"}},                               //	ScandinaviaTRUE
-	Territory{id: 30, Name: "Paris", Abbr: "PAR", edges: []string{"PIC", "BRE", "BUR", "GAS"}},                         //	FranceTRUE
-	Territory{id: 31, Name: "Picardy", Abbr: "PIC", edges: []string{"BEL", "BRE", "BUR", "PAR"}},                       //	France
-	Territory{id: 32, Name: "Piedmont", Abbr: "PIE", edges: []string{"TUS", "TYR", "VEN", "MAR"}},                      //	Italy
-	Territory{id: 33, Name: "Portugal", Abbr: "POR", edges: []string{"SPA"}},                                           //	IberiaTRUE
-	Territory{id: 34, Name: "Prussia", Abbr: "PRU", edges: []string{"SIL", "WAR", "BER", "LVN"}},                       //	Germany
-	Territory{id: 35, Name: "Rome", Abbr: "ROM", edges: []string{"TUS", "VEN", "APU", "NAP"}},                          // or RME	ItalyTRUE
-	Territory{id: 36, Name: "Ruhr", Abbr: "RUH", edges: []string{"BEL", "BUR", "HOL", "KIE", "MUN"}},                   // or RHR	Germany
-	Territory{id: 37, Name: "Rumania", Abbr: "RUM", edges: []string{"SER", "SEV", "UKR", "BUD", "BUL", "GAL"}},         // or RMA	BalkansTRUE
-	Territory{id: 38, Name: "Saint Petersburg", Abbr: "STP", edges: []string{"FIN", "LVN", "NWY", "MOS"}},              //	RussiaTRUE
-	Territory{id: 39, Name: "Serbia", Abbr: "SER", edges: []string{"TRI", "ALB", "BUD", "BUL", "GRE", "RUM"}},          //	BalkansTRUE
-	Territory{id: 40, Name: "Sevastopol", Abbr: "SEV", edges: []string{"UKR", "ARM", "MOS", "RUM"}},                    //	RussiaTRUE
-	Territory{id: 41, Name: "Silesia", Abbr: "SIL", edges: []string{"WAR", "BER", "BOH", "GAL", "MUN", "PRU"}},         //	Germany
-	Territory{id: 42, Name: "Smyrna", Abbr: "SMY", edges: []string{"SYR", "ANK", "ARM", "CON"}},                        //	TurkeyTRUE
-	Territory{id: 43, Name: "Spain", Abbr: "SPA", edges: []string{"GAS", "MAR", "POR"}},                                //	IberiaTRUE
-	Territory{id: 44, Name: "Sweden", Abbr: "SWE", edges: []string{"DEN", "FIN", "NWY"}},                               //	ScandinaviaTRUE
-	Territory{id: 45, Name: "Syria", Abbr: "SYR", edges: []string{"ARM", "SMY"}},                                       //	Turkey
-	Territory{id: 46, Name: "Trieste", Abbr: "TRI", edges: []string{"TYR", "VEN", "VIE", "ALB", "BUD", "SER"}},         //	AustriaTRUE
-	Territory{id: 47, Name: "Tunis", Abbr: "TUN", edges: []string{"NAF"}},                                              //	AfricaTRUE
-	Territory{id: 48, Name: "Tuscany", Abbr: "TUS", edges: []string{"VEN", "PIE", "ROM"}},                              //	Italy
-	Territory{id: 49, Name: "Tyrolia", Abbr: "TYR", edges: []string{"VEN", "VIE", "BOH", "MUN", "PIE", "TRI"}},         //	Austria
-	Territory{id: 50, Name: "Ukraine", Abbr: "UKR", edges: []string{"WAR", "GAL", "MOS", "RUM", "SEV"}},                //	Russia
-	Territory{id: 51, Name: "Venice", Abbr: "VEN", edges: []string{"APU", "PIE", "ROM", "TRI", "TUS", "TYR"}},          //	ItalyTRUE
-	Territory{id: 52, Name: "Vienna", Abbr: "VIE", edges: []string{"BOH", "BUD", "GAL", "TRI", "TYR"}},                 //	AustriaTRUE
-	Territory{id: 53, Name: "Wales", Abbr: "WAL", edges: []string{"YOR", "LON", "LVP"}},                                //	England
-	Territory{id: 54, Name: "Warsaw", Abbr: "WAR", edges: []string{"GAL", "LVN", "MOS", "PRU", "SIL", "UKR"}},          //	RussiaTRUE
-	Territory{id: 55, Name: "Yorkshire", Abbr: "YOR", edges: []string{"EDI", "LON", "LVN", "WAL"}},                     //	England
+	Territory{id: 0, Name: "Albania", Abbr: "alb", edges: []string{"gre", "ser", "tri"}},                               //	Balkans
+	Territory{id: 1, Name: "Ankara", Abbr: "ank", edges: []string{"arm", "con", "smy"}},                                //	TurkeyTRUE
+	Territory{id: 2, Name: "Apulia", Abbr: "apu", edges: []string{"nap", "rom", "ven"}},                                //	Italy
+	Territory{id: 3, Name: "Armenia", Abbr: "arm", edges: []string{"sev", "smy", "syr"}},                               //	Turkey
+	Territory{id: 4, Name: "Belgium", Abbr: "bel", edges: []string{"bur", "hol", "pic", "rur"}},                        //	Low Countries	TRUE
+	Territory{id: 5, Name: "Berlin", Abbr: "ber", edges: []string{"kie", "mun", "pru", "sil"}},                         //	GermanyTRUE
+	Territory{id: 6, Name: "Bohemia", Abbr: "boh", edges: []string{"gal", "mun", "sil", "tyr"}},                        //	Austria
+	Territory{id: 7, Name: "Brest", Abbr: "bre", edges: []string{"gas", "par", "pic"}},                                 //	FranceTRUE
+	Territory{id: 8, Name: "Budapest", Abbr: "bud", edges: []string{"gal", "rum", "ser", "tri", "vie"}},                //	AustriaTRUE
+	Territory{id: 9, Name: "Bulgaria", Abbr: "bul", edges: []string{"con", "gre", "rum", "ser"}},                       //	BalkansTRUE
+	Territory{id: 10, Name: "Burgundy", Abbr: "bur", edges: []string{"bel", "gas", "mar", "mun", "par", "pic", "ruh"}}, //	France
+	Territory{id: 11, Name: "Clyde", Abbr: "cly", edges: []string{"edi", "lvp"}},                                       //	England
+	Territory{id: 12, Name: "Constantinople", Abbr: "con", edges: []string{"smy", "ank", "bul"}},                       //	TurkeyTRUE
+	Territory{id: 13, Name: "Denmark", Abbr: "den", edges: []string{"kie", "swe"}},                                     //	ScandinaviaTRUE
+	Territory{id: 14, Name: "Edinburgh", Abbr: "edi", edges: []string{"lvp", "yor", "cly"}},                            //	EnglandTRUE
+	Territory{id: 15, Name: "Finland", Abbr: "fin", edges: []string{"nwy", "stp", "swe"}},                              //	Russia
+	Territory{id: 16, Name: "Galacia", Abbr: "gal", edges: []string{"rum", "sil", "ukr", "vie", "war", "boh", "bud"}},  //	Austria
+	Territory{id: 17, Name: "Gascony", Abbr: "gas", edges: []string{"mar", "par", "spa", "bre", "bur"}},                //	France
+	Territory{id: 18, Name: "Greece", Abbr: "gre", edges: []string{"ser", "alb", "bul"}},                               //	BalkansTRUE
+	Territory{id: 19, Name: "Holland", Abbr: "hol", edges: []string{"kie", "ruh", "bel"}},                              //	Low Countries	TRUE
+	Territory{id: 20, Name: "Kiel", Abbr: "kie", edges: []string{"mun", "ruh", "ber", "den", "hol"}},                   //	GermanyTRUE
+	Territory{id: 21, Name: "Liverpool", Abbr: "lvp", edges: []string{"wal", "yor", "cly", "edi"}},                     // or lpl	EnglandTRUE
+	Territory{id: 22, Name: "Livonia", Abbr: "lvn", edges: []string{"mos", "pru", "stp", "war"}},                       // or lva	Russia
+	Territory{id: 23, Name: "London", Abbr: "lon", edges: []string{"wal", "yor"}},                                      //	EnglandTRUE
+	Territory{id: 24, Name: "Marseilles", Abbr: "mar", edges: []string{"pie", "spa", "bur", "gas"}},                    //	FranceTRUE
+	Territory{id: 25, Name: "Moscow", Abbr: "mos", edges: []string{"sev", "stp", "urk", "war", "lvn"}},                 //	RussiaTRUE
+	Territory{id: 26, Name: "Munich", Abbr: "mun", edges: []string{"ruh", "sil", "tyr", "ber", "boh", "bur", "kie"}},   //	GermanyTRUE
+	Territory{id: 27, Name: "Naples", Abbr: "nap", edges: []string{"rom", "apu"}},                                      //	ItalyTRUE
+	Territory{id: 28, Name: "North Africa", Abbr: "naf", edges: []string{"tun"}},                                       //	Africa
+	Territory{id: 29, Name: "Norway", Abbr: "nwy", edges: []string{"stp", "swe", "fin"}},                               //	ScandinaviaTRUE
+	Territory{id: 30, Name: "Paris", Abbr: "par", edges: []string{"pic", "bre", "bur", "gas"}},                         //	FranceTRUE
+	Territory{id: 31, Name: "Picardy", Abbr: "pic", edges: []string{"bel", "bre", "bur", "par"}},                       //	France
+	Territory{id: 32, Name: "Piedmont", Abbr: "pie", edges: []string{"tus", "tyr", "ven", "mar"}},                      //	Italy
+	Territory{id: 33, Name: "Portugal", Abbr: "por", edges: []string{"spa"}},                                           //	IberiaTRUE
+	Territory{id: 34, Name: "Prussia", Abbr: "pru", edges: []string{"sil", "war", "ber", "lvn"}},                       //	Germany
+	Territory{id: 35, Name: "Rome", Abbr: "rom", edges: []string{"tus", "ven", "apu", "nap"}},                          // or rme	ItalyTRUE
+	Territory{id: 36, Name: "Ruhr", Abbr: "ruh", edges: []string{"bel", "bur", "hol", "kie", "mun"}},                   // or rhr	Germany
+	Territory{id: 37, Name: "Rumania", Abbr: "rum", edges: []string{"ser", "sev", "ukr", "bud", "bul", "gal"}},         // or rma	BalkansTRUE
+	Territory{id: 38, Name: "Saint Petersburg", Abbr: "stp", edges: []string{"fin", "lvn", "nwy", "mos"}},              //	RussiaTRUE
+	Territory{id: 39, Name: "Serbia", Abbr: "ser", edges: []string{"tri", "alb", "bud", "bul", "gre", "rum"}},          //	BalkansTRUE
+	Territory{id: 40, Name: "Sevastopol", Abbr: "sev", edges: []string{"ukr", "arm", "mos", "rum"}},                    //	RussiaTRUE
+	Territory{id: 41, Name: "Silesia", Abbr: "sil", edges: []string{"war", "ber", "boh", "gal", "mun", "pru"}},         //	Germany
+	Territory{id: 42, Name: "Smyrna", Abbr: "smy", edges: []string{"syr", "ank", "arm", "con"}},                        //	TurkeyTRUE
+	Territory{id: 43, Name: "Spain", Abbr: "spa", edges: []string{"gas", "mar", "por"}},                                //	IberiaTRUE
+	Territory{id: 44, Name: "Sweden", Abbr: "swe", edges: []string{"den", "fin", "nwy"}},                               //	ScandinaviaTRUE
+	Territory{id: 45, Name: "Syria", Abbr: "syr", edges: []string{"arm", "smy"}},                                       //	Turkey
+	Territory{id: 46, Name: "Trieste", Abbr: "tri", edges: []string{"tyr", "ven", "vie", "alb", "bud", "ser"}},         //	AustriaTRUE
+	Territory{id: 47, Name: "Tunis", Abbr: "tun", edges: []string{"naf"}},                                              //	AfricaTRUE
+	Territory{id: 48, Name: "Tuscany", Abbr: "tus", edges: []string{"ven", "pie", "rom"}},                              //	Italy
+	Territory{id: 49, Name: "Tyrolia", Abbr: "tyr", edges: []string{"ven", "vie", "boh", "mun", "pie", "tri"}},         //	Austria
+	Territory{id: 50, Name: "Ukraine", Abbr: "ukr", edges: []string{"war", "gal", "mos", "rum", "sev"}},                //	Russia
+	Territory{id: 51, Name: "Venice", Abbr: "ven", edges: []string{"apu", "pie", "rom", "tri", "tus", "tyr"}},          //	ItalyTRUE
+	Territory{id: 52, Name: "Vienna", Abbr: "vie", edges: []string{"boh", "bud", "gal", "tri", "tyr"}},                 //	AustriaTRUE
+	Territory{id: 53, Name: "Wales", Abbr: "wal", edges: []string{"yor", "lon", "lvp"}},                                //	England
+	Territory{id: 54, Name: "Warsaw", Abbr: "war", edges: []string{"gal", "lvn", "mos", "pru", "sil", "ukr"}},          //	RussiaTRUE
+	Territory{id: 55, Name: "Yorkshire", Abbr: "yor", edges: []string{"edi", "lon", "lvn", "wal"}},                     //	England
 }

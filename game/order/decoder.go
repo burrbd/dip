@@ -7,19 +7,19 @@ import (
 	"github.com/burrbd/dip/game/order/board"
 )
 
-func Decode(order string) (interface{}, error) {
+func Decode(order, country string) (interface{}, error) {
 	tokens := strings.Split(strings.ToLower(order), " ")
 	n := len(tokens)
 	switch n {
 	case 2:
-		return decodeMove(tokens)
+		return decodeMove(tokens, country)
 	case 3:
-		return decodeHold(tokens)
+		return decodeHold(tokens, country)
 	case 5:
 		if tokens[2] == "c" {
-			return decodeConvoy(tokens)
+			return decodeConvoy(tokens, country)
 		} else if tokens[2] == "s" {
-			return decodeSupport(tokens)
+			return decodeSupport(tokens, country)
 		}
 		fallthrough
 	default:
@@ -27,7 +27,7 @@ func Decode(order string) (interface{}, error) {
 	}
 }
 
-func decodeMove(tokens []string) (interface{}, error) {
+func decodeMove(tokens []string, country string) (interface{}, error) {
 	unit, err := unitType(tokens[0])
 	if err != nil {
 		return nil, err
@@ -38,12 +38,13 @@ func decodeMove(tokens []string) (interface{}, error) {
 	}
 	from, to := fromTo[0], fromTo[1]
 	return Move{
+		Country:  country,
 		UnitType: unit,
-		From:     board.Territory{Abbr: from},
-		To:       board.Territory{Abbr: to}}, nil
+		From:     board.LookupTerritory(from),
+		To:       board.LookupTerritory(to)}, nil
 }
 
-func decodeHold(tokens []string) (interface{}, error) {
+func decodeHold(tokens []string, country string) (interface{}, error) {
 	unit, err := unitType(tokens[0])
 	if err != nil {
 		return nil, err
@@ -53,25 +54,27 @@ func decodeHold(tokens []string) (interface{}, error) {
 		return nil, fmt.Errorf("invalid order: %s", strings.Join(tokens, " "))
 	}
 	return Hold{
+		Country:  country,
 		UnitType: unit,
-		At:       board.Territory{Abbr: at},
+		At:       board.LookupTerritory(at),
 	}, nil
 }
 
-func decodeSupport(tokens []string) (interface{}, error) {
+func decodeSupport(tokens []string, country string) (interface{}, error) {
 	unit, err := unitType(tokens[0])
 	if err != nil {
 		return nil, err
 	}
 	fromTo := strings.Split(tokens[4], "-")
 	if len(fromTo) == 2 {
-		move, err := decodeMove(tokens[3:])
+		move, err := decodeMove(tokens[3:], country)
 		if err != nil {
 			return nil, err
 		}
 		return MoveSupport{
+			Country:  country,
 			UnitType: unit,
-			By:       board.Territory{Abbr: tokens[1]},
+			By:       board.LookupTerritory(tokens[1]),
 			Move:     move.(Move),
 		}, nil
 	}
@@ -80,13 +83,14 @@ func decodeSupport(tokens []string) (interface{}, error) {
 		return nil, err
 	}
 	return HoldSupport{
+		Country:  country,
 		UnitType: unit,
-		By:       board.Territory{Abbr: tokens[1]},
-		Hold:     Hold{UnitType: supportedUnit, At: board.Territory{Abbr: tokens[4]}},
+		By:       board.LookupTerritory(tokens[1]),
+		Hold:     Hold{UnitType: supportedUnit, At: board.LookupTerritory(tokens[4])},
 	}, nil
 }
 
-func decodeConvoy(tokens []string) (interface{}, error) {
+func decodeConvoy(tokens []string, country string) (interface{}, error) {
 	if tokens[0] != "f" {
 		return nil, fmt.Errorf("invalid order; only fleet can convoy: %s", strings.Join(tokens, " "))
 	}
@@ -94,13 +98,14 @@ func decodeConvoy(tokens []string) (interface{}, error) {
 	if len(fromTo) != 2 {
 		return nil, fmt.Errorf("invalid order: %s", strings.Join(tokens, " "))
 	}
-	move, err := decodeMove(tokens[3:])
+	move, err := decodeMove(tokens[3:], country)
 	if err != nil {
 		return nil, err
 	}
 	return MoveConvoy{
-		By:   board.Territory{Abbr: tokens[1]},
-		Move: move.(Move),
+		Country: country,
+		By:      board.LookupTerritory(tokens[1]),
+		Move:    move.(Move),
 	}, nil
 }
 

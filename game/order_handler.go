@@ -20,12 +20,14 @@ func (h OrderHandler) ApplyOrders(orders order.Set, manager board.Manager) {
 boardPositionLoop:
 	for unit, pos := range manager.Positions() {
 		for _, move := range orders.Moves {
-			if matchMoveToPosition(pos, move, "") {
-				manager.Move(unit, move.To, h.moveStrength(move, orders))
+			if matchMoveToPosition(pos, move) {
+				if err := h.Validator.ValidateMove(*unit, move); err == nil {
+					manager.Move(unit, move.To, h.moveStrength(move, orders))
+				}
 				continue boardPositionLoop
 			}
 		}
-		manager.Hold(unit, h.positionStrength(pos, orders))
+		manager.Hold(unit, h.holdStrength(pos, orders))
 	}
 }
 
@@ -40,7 +42,7 @@ func (h OrderHandler) moveStrength(move order.Move, orders order.Set) (strength 
 	return
 }
 
-func (h OrderHandler) positionStrength(pos board.Position, orders order.Set) (strength int) {
+func (h OrderHandler) holdStrength(pos board.Position, orders order.Set) (strength int) {
 	for _, support := range orders.HoldSupports {
 		if support.Hold.At.Abbr == pos.Territory.Abbr &&
 			!holdSupportCut(support, orders.Moves) {
@@ -50,8 +52,8 @@ func (h OrderHandler) positionStrength(pos board.Position, orders order.Set) (st
 	return
 }
 
-func matchMoveToPosition(pos board.Position, move order.Move, country string) bool {
-	return move.Country == country && move.From.Abbr == pos.Territory.Abbr
+func matchMoveToPosition(pos board.Position, move order.Move) bool {
+	return move.From.Abbr == pos.Territory.Abbr
 }
 
 func moveSupportCut(sup order.MoveSupport, moves []order.Move) bool {

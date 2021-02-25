@@ -5,11 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cheekybits/is"
-
 	"github.com/burrbd/dip/game"
 	"github.com/burrbd/dip/game/order"
 	"github.com/burrbd/dip/game/order/board"
+	"github.com/cheekybits/is"
 )
 
 var specs = []spec{
@@ -112,6 +111,12 @@ var specs = []spec{
 			{order: "A Bud S A Vie", position: "bud"},
 		},
 	},
+	{
+		description: "given a unit moves to moves to a non-contiguous territory, then the move will be invalid",
+		orders: []*result{
+			{order: "A Vie-Lon", position: "vie"},
+		},
+	},
 }
 
 type result struct {
@@ -128,17 +133,20 @@ type spec struct {
 }
 
 func TestMainPhaseResolver_ResolveCases(t *testing.T) {
-	is := is.New(t)
+	country := "a_country"
 
 	for _, spec := range filter(specs) {
 		t.Run(spec.description, func(t *testing.T) {
+
+			is := is.New(t)
+
 			logTableHeading(t)
 			positionManager := board.NewPositionManager()
 
 			orders := order.Set{}
 
 			for _, result := range spec.orders {
-				o, err := order.Decode(result.order)
+				o, err := order.Decode(result.order, country)
 				is.NoErr(err)
 				var terr board.Territory
 				switch v := o.(type) {
@@ -159,12 +167,15 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 					orders.AddMoveConvoy(v)
 				}
 
-				u := &board.Unit{}
-				positionManager.AddUnit(u, terr)
+				u := &board.Unit{Country: country}
+				positionManager.AddUnit(u, board.LookupTerritory(terr.Abbr))
 				result.unit = u
 			}
 
-			orderHandler := game.OrderHandler{}
+			validator := order.NewValidator(board.CreateArmyGraph())
+			orderHandler := game.OrderHandler{
+				Validator: validator,
+			}
 			orderHandler.ApplyOrders(orders, positionManager)
 			game.ResolveOrders(positionManager)
 
@@ -192,20 +203,14 @@ func filter(specs []spec) []spec {
 	return focused
 }
 
-type mockGraph struct {
-	IsNeighbourFunc func(t1, t2 string) (bool, error)
-}
-
-func (g mockGraph) IsNeighbour(t1, t2 string) (bool, error) {
-	return g.IsNeighbourFunc(t1, t2)
-}
-
 func logTableHeading(t *testing.T) {
+	t.Helper()
 	t.Log("  | order             | result | defeated |")
 	t.Log("  +---------------------------------------+")
 }
 
 func logTableRow(t *testing.T, o result) {
+	t.Helper()
 	t.Logf("  | %s%s| %s    | %t%s|",
 		o.order,
 		strings.Repeat(" ", 18-len(o.order)),

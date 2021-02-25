@@ -112,9 +112,19 @@ var specs = []spec{
 		},
 	},
 	{
-		description: "given a unit moves to moves to a non-contiguous territory, then the move will be invalid",
+		description: "given a unit moves to a non-contiguous territory, then the move will be invalid",
 		orders: []*result{
 			{order: "A Vie-Lon", position: "vie"},
+		},
+	},
+	{
+		description: "given a supported unit holds and is attacked by unit with equal strength, " +
+			"then attacking unit bounces",
+		orders: []*result{
+			{order: "A Vie H", position: "vie"},
+			{order: "A Bud S A Vie", position: "bud"},
+			{order: "A Boh-Vie", position: "boh"},
+			{order: "A Tyr S A Boh-Vie", position: "tyr"},
 		},
 	},
 }

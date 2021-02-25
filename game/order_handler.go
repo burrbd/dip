@@ -5,45 +5,69 @@ import (
 	"github.com/burrbd/dip/game/order/board"
 )
 
+type validator interface {
+	ValidateMove(board.Unit, order.Move) error
+	ValidateMoveSupport(board.Unit, order.MoveSupport) error
+}
+
 // OrderHandler applies orders to the board.
 type OrderHandler struct {
-	Matcher order.Matcher
+	Validator validator
 }
 
 // ApplyOrders applies orders for a turn. Satisifies Handler interface
 func (h OrderHandler) ApplyOrders(orders order.Set, manager board.Manager) {
+boardPositionLoop:
 	for unit, pos := range manager.Positions() {
 		for _, move := range orders.Moves {
-			if !h.Matcher.MatchMove(move, pos, "") {
-				continue
+			if matchMoveToPosition(pos, move, "") {
+				manager.Move(unit, move.To, h.moveStrength(move, orders))
+				continue boardPositionLoop
 			}
-			manager.Move(unit, move.To, h.moveStrength(move, orders))
-			break
 		}
-		for _, hold := range orders.Holds {
-			if !h.Matcher.MatchHold(hold, pos, "") {
-				continue
-			}
-			manager.Hold(unit, h.holdStrength(hold, orders))
-			break
-		}
+		manager.Hold(unit, h.positionStrength(pos, orders))
 	}
 }
 
 func (h OrderHandler) moveStrength(move order.Move, orders order.Set) (strength int) {
 	for _, support := range orders.MoveSupports {
-		if h.Matcher.MatchMoveSupport(support, move) && !h.Matcher.MoveSupportCut(support, orders.Moves) {
+		if support.Move.From.Abbr == move.From.Abbr &&
+			support.Move.To.Abbr == move.To.Abbr &&
+			!moveSupportCut(support, orders.Moves) {
 			strength++
 		}
 	}
 	return
 }
 
-func (h OrderHandler) holdStrength(hold order.Hold, orders order.Set) (strength int) {
+func (h OrderHandler) positionStrength(pos board.Position, orders order.Set) (strength int) {
 	for _, support := range orders.HoldSupports {
-		if h.Matcher.MatchHoldSupport(support, hold) && !h.Matcher.HoldSupportCut(support, orders.Moves) {
+		if support.Hold.At.Abbr == pos.Territory.Abbr &&
+			!holdSupportCut(support, orders.Moves) {
 			strength++
 		}
 	}
 	return
+}
+
+func matchMoveToPosition(pos board.Position, move order.Move, country string) bool {
+	return move.Country == country && move.From.Abbr == pos.Territory.Abbr
+}
+
+func moveSupportCut(sup order.MoveSupport, moves []order.Move) bool {
+	for _, cut := range moves {
+		if sup.By.Is(cut.To) && sup.Move.To.IsNot(cut.From) {
+			return true
+		}
+	}
+	return false
+}
+
+func holdSupportCut(sup order.HoldSupport, moves []order.Move) bool {
+	for _, cut := range moves {
+		if sup.By.Is(cut.To) {
+			return true
+		}
+	}
+	return false
 }

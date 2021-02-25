@@ -9,8 +9,8 @@ import (
 type PositionEvent int
 
 const (
-	// Added unit added to the board at the beginning of the phase
-	Added PositionEvent = iota
+	// UnitPlaced unit added to the board at the beginning of the phase
+	UnitPlaced PositionEvent = iota // TODO: decide better name for this
 	// Held unit has been held by player
 	Held
 	// Moved unit has moved territories
@@ -56,7 +56,7 @@ func NewPositionManager() PositionManager {
 func (m PositionManager) AddUnit(unit *Unit, territory Territory) {
 	m.history[unit] = []Position{{
 		Territory: territory,
-		Cause:     Added,
+		Cause:     UnitPlaced,
 	}}
 }
 
@@ -76,10 +76,12 @@ func (m PositionManager) Conflict() []*Unit {
 		if position.Cause == Defeated {
 			continue
 		}
+
+		conflicts = m.appendTerritoryConflict(conflicts, u)
 		if position.Cause == Moved {
 			conflicts = m.appendCounterAttackConflict(conflicts, u)
 		}
-		conflicts = m.appendTerritoryConflict(conflicts, u)
+
 	}
 	for _, units := range conflicts {
 		if len(units) > 1 {

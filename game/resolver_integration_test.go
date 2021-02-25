@@ -112,16 +112,6 @@ var specs = []spec{
 			{order: "A Bud S A Vie", position: "bud"},
 		},
 	},
-	{
-		description: "given a unit holds and is supported, and is attacked by unit with equal strength, " +
-			"then attacking unit bounces",
-		orders: []*result{
-			{order: "A Vie H", position: "vie"},
-			{order: "A Bud S A Vie", position: "bud"},
-			{order: "A Boh-Vie", position: "boh"},
-			{order: "A Tyr S A Boh-Vie", position: "tyr"},
-		},
-	},
 }
 
 type result struct {
@@ -139,9 +129,6 @@ type spec struct {
 
 func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 	is := is.New(t)
-	graph := mockGraph{
-		IsNeighbourFunc: func(t1, t2 string) (bool, error) { return true, nil },
-	}
 
 	for _, spec := range filter(specs) {
 		t.Run(spec.description, func(t *testing.T) {
@@ -177,8 +164,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 				result.unit = u
 			}
 
-			matcher := order.PositionMatcher{ArmyGraph: graph}
-			orderHandler := game.OrderHandler{Matcher: matcher}
+			orderHandler := game.OrderHandler{}
 			orderHandler.ApplyOrders(orders, positionManager)
 			game.ResolveOrders(positionManager)
 

@@ -46,62 +46,62 @@ func TestPositionManager_Conflict(t *testing.T) {
 	}{
 		{
 			desc:            "1 unit",
-			positions:       units(add(with(board.Added, "a_terr"))),
+			positions:       units(add(with(board.UnitPlaced, "a_terr"))),
 			conflictedUnits: 0,
 		},
 		{
 			desc: "2 units on different territory",
 			positions: units(
-				add(with(board.Added, "a_terr")),
-				add(with(board.Added, "b_terr"))),
+				add(with(board.UnitPlaced, "a_terr")),
+				add(with(board.UnitPlaced, "b_terr"))),
 			conflictedUnits: 0,
 		},
 		{
 			desc: "2 units on same territory",
 			positions: units(
-				add(with(board.Added, "a_terr")),
-				add(with(board.Added, "a_terr"))),
+				add(with(board.UnitPlaced, "a_terr")),
+				add(with(board.UnitPlaced, "a_terr"))),
 			conflictedUnits:     2,
 			conflictedTerritory: "a_terr",
 		},
 		{
 			desc: "3 units on same territory",
 			positions: units(
-				add(with(board.Added, "a_terr")),
-				add(with(board.Added, "a_terr")),
-				add(with(board.Added, "a_terr"))),
+				add(with(board.UnitPlaced, "a_terr")),
+				add(with(board.UnitPlaced, "a_terr")),
+				add(with(board.UnitPlaced, "a_terr"))),
 			conflictedUnits:     3,
 			conflictedTerritory: "a_terr",
 		},
 		{
 			desc: "2 units on same territory, 1 unit different",
 			positions: units(
-				add(with(board.Added, "b_terr")),
-				add(with(board.Added, "a_terr")),
-				add(with(board.Added, "b_terr"))),
+				add(with(board.UnitPlaced, "b_terr")),
+				add(with(board.UnitPlaced, "a_terr")),
+				add(with(board.UnitPlaced, "b_terr"))),
 			conflictedUnits:     2,
 			conflictedTerritory: "b_terr",
 		},
 		{
 			desc: "2 units move to same territory",
 			positions: units(
-				add(with(board.Added, "b_terr"), with(board.Moved, "c_terr", 0)),
-				add(with(board.Added, "a_terr"), with(board.Moved, "c_terr", 0))),
+				add(with(board.UnitPlaced, "b_terr"), with(board.Moved, "c_terr", 0)),
+				add(with(board.UnitPlaced, "a_terr"), with(board.Moved, "c_terr", 0))),
 			conflictedUnits:     2,
 			conflictedTerritory: "c_terr",
 		},
 		{
 			desc: "2 units move into each other's territory",
 			positions: units(
-				add(with(board.Added, "a_terr"), with(board.Moved, "b_terr", 0)),
-				add(with(board.Added, "b_terr"), with(board.Moved, "a_terr", 0))),
+				add(with(board.UnitPlaced, "a_terr"), with(board.Moved, "b_terr", 0)),
+				add(with(board.UnitPlaced, "b_terr"), with(board.Moved, "a_terr", 0))),
 			conflictedUnits: 2,
 		},
 		{
 			desc: "2 units in same territory, 1 unit defeated",
 			positions: units(
-				add(with(board.Added, "a_terr"), with(board.Moved, "b_terr", 0)),
-				add(with(board.Added, "b_terr"), with(board.Defeated, "b_terr", 0))),
+				add(with(board.UnitPlaced, "a_terr"), with(board.Moved, "b_terr", 0)),
+				add(with(board.UnitPlaced, "b_terr"), with(board.Defeated, "b_terr", 0))),
 			conflictedUnits: 0,
 		},
 	}
@@ -113,7 +113,7 @@ func TestPositionManager_Conflict(t *testing.T) {
 				u := &board.Unit{}
 				for _, position := range unitPositions {
 					switch position[0] {
-					case board.Added:
+					case board.UnitPlaced:
 						m.AddUnit(u, board.Territory{Abbr: position[1].(string)})
 					case board.Moved:
 						m.Move(u, board.Territory{Abbr: position[1].(string)}, 0)
@@ -139,7 +139,7 @@ func TestPositionManager_AddUnit(t *testing.T) {
 	u := &board.Unit{}
 	m := board.NewPositionManager()
 	m.AddUnit(u, terr)
-	is.Equal(board.Added, m.Position(u).Cause)
+	is.Equal(board.UnitPlaced, m.Position(u).Cause)
 	is.Equal(terr, m.Position(u).Territory)
 	is.Equal(0, m.Position(u).Strength)
 }
@@ -183,7 +183,7 @@ func TestManager_Bounce(t *testing.T) {
 	m.AddUnit(u, t1)
 
 	is.Equal(t1, m.Position(u).Territory)
-	is.Equal(board.Added, m.Position(u).Cause)
+	is.Equal(board.UnitPlaced, m.Position(u).Cause)
 
 	m.Move(u, t2, 1)
 	m.Bounce(u)

@@ -3,10 +3,9 @@ jobs:
   test:
     working_directory: /go/src/github.com/burrbd/dip
     docker:
-    - image: circleci/golang:1.12
+    - image: circleci/golang:1.15
     steps:
     - checkout
-    - run: dep ensure
     - run: go test -v -cover -race ./...
 workflows:
   version: 2

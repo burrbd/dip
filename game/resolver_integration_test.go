@@ -138,6 +138,17 @@ var specs = []spec{
 			{order: "A Sil-Gal", position: "sil"},
 		},
 	},
+	{
+		description: "given a supported attack where both support cutters tie at the supporter's territory, " +
+			"then support stands and attack succeeds",
+		orders: []*result{
+			{order: "A Boh-Gal", position: "gal"},
+			{order: "A Vie S A Boh-Gal", position: "vie"},
+			{order: "A Gal H", position: "gal", defeated: true},
+			{order: "A Bud-Vie", position: "bud"},
+			{order: "A Tri-Vie", position: "tri"},
+		},
+	},
 }
 
 type result struct {

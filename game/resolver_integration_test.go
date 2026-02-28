@@ -127,6 +127,17 @@ var specs = []spec{
 			{order: "A Tyr S A Boh-Vie", position: "tyr"},
 		},
 	},
+	{
+		description: "given a supported attack where the support cutter is itself bounced, " +
+			"then support stands and attack succeeds",
+		orders: []*result{
+			{order: "A Boh-Vie", position: "vie"},
+			{order: "A Gal S A Boh-Vie", position: "gal"},
+			{order: "A Vie H", position: "vie", defeated: true},
+			{order: "A Bud-Gal", position: "bud"},
+			{order: "A Sil-Gal", position: "sil"},
+		},
+	},
 }
 
 type result struct {
@@ -187,7 +198,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 				Validator: validator,
 			}
 			orderHandler.ApplyOrders(orders, positionManager)
-			game.ResolveOrders(positionManager)
+			game.ResolveOrders(positionManager, orders)
 
 			for _, result := range spec.orders {
 				logTableRow(t, *result)

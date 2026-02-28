@@ -38,6 +38,8 @@ type Manager interface {
 	SetDefeated(*Unit)
 	Conflict() []*Unit
 	AtOrigin(*Unit) bool
+	Origin(*Unit) Territory
+	UpdateStrength(*Unit, int)
 }
 
 // PositionManager implements Manager
@@ -128,6 +130,20 @@ func (m PositionManager) SetDefeated(u *Unit) {
 func (m PositionManager) Position(u *Unit) *Position {
 	hist := m.positionHistory(u)
 	return &hist[len(hist)-1]
+}
+
+// Origin returns the territory the unit occupied at the start of the phase.
+func (m PositionManager) Origin(u *Unit) Territory {
+	hist := m.positionHistory(u)
+	if hist == nil {
+		return Territory{}
+	}
+	return hist[0].Territory
+}
+
+// UpdateStrength overwrites the strength recorded in the unit's current position.
+func (m PositionManager) UpdateStrength(u *Unit, strength int) {
+	m.Position(u).Strength = strength
 }
 
 // AtOrigin determines if the unit is located at the phase starting position

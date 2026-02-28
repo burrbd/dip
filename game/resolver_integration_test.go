@@ -129,24 +129,34 @@ var specs = []spec{
 	},
 	{
 		description: "given a supported attack where the support cutter is itself bounced, " +
-			"then support stands and attack succeeds",
+			"then support is still cut and attack fails (DATC 6.D.9)",
 		orders: []*result{
-			{order: "A Boh-Vie", position: "vie"},
+			{order: "A Boh-Vie", position: "boh"},
 			{order: "A Gal S A Boh-Vie", position: "gal"},
-			{order: "A Vie H", position: "vie", defeated: true},
+			{order: "A Vie H", position: "vie"},
 			{order: "A Bud-Gal", position: "bud"},
 			{order: "A Sil-Gal", position: "sil"},
 		},
 	},
 	{
 		description: "given a supported attack where both support cutters tie at the supporter's territory, " +
-			"then support stands and attack succeeds",
+			"then support is still cut and attack fails (DATC 6.D.9)",
 		orders: []*result{
-			{order: "A Boh-Gal", position: "gal"},
+			{order: "A Boh-Gal", position: "boh"},
 			{order: "A Vie S A Boh-Gal", position: "vie"},
-			{order: "A Gal H", position: "gal", defeated: true},
+			{order: "A Gal H", position: "gal"},
 			{order: "A Bud-Vie", position: "bud"},
 			{order: "A Tri-Vie", position: "tri"},
+		},
+	},
+	{
+		description: "given a lone attack on a supporter that itself bounces, " +
+			"then support is still cut and attack on supported territory fails (DATC 6.D.9)",
+		orders: []*result{
+			{order: "A Gal-Vie", position: "gal"},
+			{order: "A Boh S A Gal-Vie", position: "boh"},
+			{order: "A Vie H", position: "vie"},
+			{order: "A Mun-Boh", position: "mun"},
 		},
 	},
 }
@@ -209,7 +219,7 @@ func TestMainPhaseResolver_ResolveCases(t *testing.T) {
 				Validator: validator,
 			}
 			orderHandler.ApplyOrders(orders, positionManager)
-			game.ResolveOrders(positionManager, orders)
+			game.ResolveOrders(positionManager)
 
 			for _, result := range spec.orders {
 				logTableRow(t, *result)

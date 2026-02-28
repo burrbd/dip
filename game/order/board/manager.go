@@ -39,8 +39,6 @@ type Manager interface {
 	Conflict() []*Unit
 	AllConflicts() [][]*Unit
 	AtOrigin(*Unit) bool
-	Origin(*Unit) Territory
-	UpdateStrength(*Unit, int)
 }
 
 // PositionManager implements Manager

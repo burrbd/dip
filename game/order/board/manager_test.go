@@ -133,6 +133,35 @@ func TestPositionManager_Conflict(t *testing.T) {
 	}
 }
 
+func TestPositionManager_Conflict_PrioritisesCounterAttackOverTerritorial(t *testing.T) {
+	is := is.New(t)
+	aaa := board.Territory{Abbr: "aaa"}
+	bbb := board.Territory{Abbr: "bbb"}
+	ccc := board.Territory{Abbr: "ccc"}
+
+	// Run many times to expose non-deterministic map iteration in Conflict().
+	// Unit a and b counter-attack each other (aaa↔bbb).
+	// Unit b and c have a territorial conflict at aaa.
+	// Conflict() must always return the counter-attack pair, not the territorial pair.
+	for i := 0; i < 100; i++ {
+		m := board.NewPositionManager()
+		a, b, c := &board.Unit{}, &board.Unit{}, &board.Unit{}
+		m.AddUnit(a, aaa)
+		m.AddUnit(b, bbb)
+		m.AddUnit(c, ccc)
+		m.Move(a, bbb, 0)
+		m.Move(b, aaa, 0)
+		m.Move(c, aaa, 0)
+
+		units := m.Conflict()
+
+		is.Equal(2, len(units))
+		found := map[*board.Unit]bool{units[0]: true, units[1]: true}
+		is.True(found[a])
+		is.True(found[b])
+	}
+}
+
 func TestPositionManager_AddUnit(t *testing.T) {
 	is := is.New(t)
 	terr := board.Territory{Abbr: "terr"}

@@ -81,6 +81,8 @@ Held       → Defeated (on conflict loss)
 4. If tied → bounce all attackers; defeat any attacker already at that territory (nowhere to retreat)
 5. Repeat until no conflicts remain
 
+**Known limitation:** This iterative one-conflict-at-a-time model is fundamentally incomplete. Many Diplomacy scenarios involve *interdependent* conflicts: whether A wins at X depends on whether B's support holds, which depends on whether B gets cut, which depends on A. Sequential resolution produces wrong outcomes for these cases regardless of ordering. The correct approach is a **simultaneous fixed-point algorithm**: in each pass, recompute all support strengths and tentative outcomes across the whole board, then repeat until the state stabilises. See the DATC (Diplomacy Adjudicator Test Cases) for the canonical test suite and algorithm specification.
+
 ---
 
 ## Package Conventions
@@ -102,15 +104,84 @@ Held       → Defeated (on conflict loss)
 
 ---
 
-## What's Not Yet Implemented
+## Open Tasks
 
-From the README:
+Tasks are listed in priority order. Each one follows the TDD workflow: write a failing integration spec in `game/resolver_integration_test.go` (or a unit test alongside the relevant file), then implement until green.
 
-1. **Hold orders with support** — `HoldSupport` structs exist but resolution logic incomplete
-2. **Fleet unit type validation** — `ValidateMove` only handles army graph; fleet movement (sea routes, coasts) not modelled
-3. **Invalid order handling** — malformed or illegal orders need graceful rejection surfaced to the bot layer
-4. **Territory coasts** — many territories have distinct land/sea coasts (e.g. Spain NC/SC); the map doesn't model these yet
-5. **Convoy orders** — `MoveConvoy` struct exists, decoder handles `C` orders, but convoy resolution is not implemented
+---
+
+### 1. Replace iterative resolver with a simultaneous fixed-point algorithm
+
+**Why it matters:** The current `ResolveOrders` loop finds one conflict, resolves it, and repeats. Conflicts with circular support dependencies (e.g. A supports B into X, B's support is cut only if A fails) produce wrong outcomes because the algorithm resolves them in sequence rather than simultaneously.
+
+**Approach:**
+- Each resolution pass should compute tentative outcomes for *all* conflicts at once, treating unresolved conflicts as "pending"
+- Support strengths are only counted from units not yet cut/disrupted
+- Repeat passes until no outcomes change (fixed point)
+- The DATC (https://web.inter.nl.net/users/L.B.Kruijswijk/#5) defines the canonical algorithm and 60+ test cases; use those as specs
+
+**Entry points:** `game/resolver.go` (`ResolveOrders`), `game/handler.go` (`OrderHandler`)
+
+---
+
+### 2. Implement hold-support resolution
+
+**Why it matters:** `HoldSupport` order structs are decoded and validated but `ResolveOrders` never applies them — a held unit always defends with strength 1 regardless of support.
+
+**Approach:**
+- In `OrderHandler.ApplyOrders`, accumulate hold-support strength onto the holding unit (same pattern as move-support)
+- Add integration specs covering: supported hold repels unsupported attack; supported hold loses to stronger attack
+
+**Entry points:** `game/handler.go`, `game/order/order.go` (`HoldSupport`)
+
+---
+
+### 3. Make the counter-attack conflict key separator explicit
+
+**Why it matters:** `appendCounterAttackConflict` encodes the pair of territories as `"aaa.bbb"` and `Conflict()` detects it with `strings.Contains(key, ".")`. This works because no territory abbreviation contains `"."`, but the coupling is implicit.
+
+**Approach:** Either (a) define a named constant for the separator and document the invariant, or (b) keep counter-attack and territorial conflict groups in separate maps so the type is structural rather than encoded in the key string.
+
+**Entry point:** `game/order/board/manager.go`
+
+---
+
+### 4. Model territory coasts and implement fleet movement
+
+**Why it matters:** Fleets move along sea routes and can only enter coastal territories via the correct coast (e.g. Spain(NC) vs Spain(SC)). `ValidateMove` currently only calls `CreateArmyGraph`; fleet orders always pass adjacency validation.
+
+**Approach:**
+- Extend `Territory` to carry a coast designator (e.g. `Coast string`, values `""`, `"nc"`, `"sc"`)
+- Build a fleet/sea adjacency graph (`CreateFleetGraph`) analogous to `CreateArmyGraph`
+- Switch `ValidateMove` on unit type to use the correct graph
+- Add DATC coast-movement specs as integration tests
+
+**Entry points:** `game/order/board/territory.go`, `game/order/validator.go`
+
+---
+
+### 5. Implement convoy resolution
+
+**Why it matters:** `MoveConvoy` is decoded but ignored during resolution. Armies can't cross sea territories without it.
+
+**Approach:**
+- A convoy order `F Mid C A Lon-Bre` means the fleet threads the army through its sea territory
+- During resolution, a chain of convoy orders forms a route; if any fleet in the chain is dislodged the convoy fails and the army bounces
+- Add integration specs for: successful convoy; convoy disrupted by attack on fleet
+
+**Entry points:** `game/resolver.go`, `game/handler.go`, `game/order/order.go` (`MoveConvoy`)
+
+---
+
+### 6. Graceful invalid-order handling
+
+**Why it matters:** `order.Decode` and `order.Validator` return errors, but there is no path to surface these to a caller (bot layer) cleanly. Invalid orders currently cause silent no-ops or panics.
+
+**Approach:**
+- `game.OrderHandler` should collect validation errors per order and expose them alongside the resolved positions
+- Design the error type so the bot layer can report per-player which orders were rejected and why
+
+**Entry points:** `game/handler.go`, `game/order/validator.go`
 
 ---
 

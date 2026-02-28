@@ -3,78 +3,65 @@ package game
 import (
 	"sort"
 
-	"github.com/burrbd/dip/game/order"
 	"github.com/burrbd/dip/game/order/board"
 )
 
-// ResolveOrders resolves orders for a turn.
-func ResolveOrders(manager board.Manager, orders order.Set) {
+// ResolveOrders resolves all orders for a turn using a simultaneous
+// fixed-point algorithm.
+//
+// Support strengths are computed once by OrderHandler.ApplyOrders using
+// order-based support-cut detection (DATC standard: any attack on a
+// supporter's territory cuts its support, regardless of whether the attack
+// succeeds). This function then loops, applying all conflict outcomes
+// simultaneously each pass, until no conflicts remain.
+func ResolveOrders(manager board.Manager) {
 	for {
-		recomputeStrengths(manager, orders)
-		units := manager.Conflict()
-		if units == nil {
+		if !resolvePass(manager) {
 			return
 		}
-		var defeated bool
+	}
+}
+
+// resolvePass applies all current conflict outcomes simultaneously.
+// Returns true if any unit was bounced or defeated.
+func resolvePass(manager board.Manager) bool {
+	groups := manager.AllConflicts()
+	if len(groups) == 0 {
+		return false
+	}
+
+	type outcome struct{ defeated bool }
+	pending := make(map[*board.Unit]outcome)
+
+	for _, units := range groups {
 		sort.Sort(UnitPositionsByStrength(manager, units))
-		if manager.Position(units[0]).Strength > manager.Position(units[1]).Strength {
-			units = units[1:]
-			defeated = true
+		decisive := manager.Position(units[0]).Strength > manager.Position(units[1]).Strength
+		losers := units
+		if decisive {
+			losers = units[1:]
 		}
-		for _, u := range units {
+		for _, u := range losers {
+			if _, exists := pending[u]; exists {
+				continue // already scheduled from another conflict group
+			}
 			atOrigin := manager.AtOrigin(u)
-			if atOrigin && defeated {
-				manager.SetDefeated(u)
+			if atOrigin && decisive {
+				pending[u] = outcome{true}
 			} else if !atOrigin {
-				manager.Bounce(u)
+				pending[u] = outcome{false}
 			}
 		}
 	}
-}
 
-// recomputeStrengths recalculates the support strength of every unit that is
-// still actively moving, based on who is currently at the supporter's territory.
-// A support is considered cut only when a unit is physically present at the
-// supporter's territory (Cause == Moved) and did not originate from the support
-// target — units that have bounced back to their origin are no longer present
-// there and therefore no longer cut the support.
-func recomputeStrengths(manager board.Manager, orders order.Set) {
-	for unit, pos := range manager.Positions() {
-		if pos.Cause != board.Moved {
-			continue
-		}
-		for _, move := range orders.Moves {
-			if move.From.Is(manager.Origin(unit)) && move.To.Is(pos.Territory) {
-				manager.UpdateStrength(unit, moveSupportStrength(move, orders.MoveSupports, manager))
-				break
-			}
+	if len(pending) == 0 {
+		return false
+	}
+	for u, o := range pending {
+		if o.defeated {
+			manager.SetDefeated(u)
+		} else {
+			manager.Bounce(u)
 		}
 	}
-}
-
-func moveSupportStrength(move order.Move, supports []order.MoveSupport, manager board.Manager) int {
-	strength := 0
-	for _, sup := range supports {
-		if sup.Move.From.Abbr == move.From.Abbr && sup.Move.To.Abbr == move.To.Abbr {
-			if !moveSupportCutByPosition(sup, manager) {
-				strength++
-			}
-		}
-	}
-	return strength
-}
-
-// moveSupportCutByPosition reports whether support is cut based on current
-// board positions. Support is cut when a unit is currently moving (Cause ==
-// Moved) into the supporter's territory from somewhere other than the support
-// target (a unit cannot cut the support of a move directed at its own territory).
-func moveSupportCutByPosition(sup order.MoveSupport, manager board.Manager) bool {
-	for unit, pos := range manager.Positions() {
-		if pos.Territory.Is(sup.By) && pos.Cause == board.Moved {
-			if manager.Origin(unit).IsNot(sup.Move.To) {
-				return true
-			}
-		}
-	}
-	return false
+	return true
 }

@@ -37,9 +37,8 @@ type Manager interface {
 	Bounce(*Unit)
 	SetDefeated(*Unit)
 	Conflict() []*Unit
+	AllConflicts() [][]*Unit
 	AtOrigin(*Unit) bool
-	Origin(*Unit) Territory
-	UpdateStrength(*Unit, int)
 }
 
 // PositionManager implements Manager
@@ -69,6 +68,28 @@ func (m PositionManager) Positions() map[*Unit]Position {
 		positions[u] = *m.Position(u)
 	}
 	return positions
+}
+
+// AllConflicts returns every conflict group on the board (territorial and
+// counter-attack). Groups with fewer than two units are omitted.
+func (m PositionManager) AllConflicts() [][]*Unit {
+	conflicts := make(map[string][]*Unit)
+	for u, position := range m.Positions() {
+		if position.Cause == Defeated {
+			continue
+		}
+		conflicts = m.appendTerritoryConflict(conflicts, u)
+		if position.Cause == Moved {
+			conflicts = m.appendCounterAttackConflict(conflicts, u)
+		}
+	}
+	var result [][]*Unit
+	for _, group := range conflicts {
+		if len(group) > 1 {
+			result = append(result, group)
+		}
+	}
+	return result
 }
 
 // Conflict returns the first conflict found on the board

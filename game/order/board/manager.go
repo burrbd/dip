@@ -83,9 +83,21 @@ func (m PositionManager) Conflict() []*Unit {
 		}
 
 	}
-	for _, units := range conflicts {
-		if len(units) > 1 {
-			return units
+	keys := make([]string, 0, len(conflicts))
+	for k := range conflicts {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		iCounter := strings.Contains(keys[i], ".")
+		jCounter := strings.Contains(keys[j], ".")
+		if iCounter != jCounter {
+			return iCounter
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		if len(conflicts[k]) > 1 {
+			return conflicts[k]
 		}
 	}
 	return nil

@@ -1,6 +1,15 @@
 # github.com/cheekybits/is v0.0.0-20150225183255-68e9c0620927
+## explicit
 github.com/cheekybits/is
+# github.com/zond/godip v0.0.0-20200101000000-000000000000
+## explicit; go 1.21
+github.com/zond/godip
+github.com/zond/godip/variants
+github.com/zond/godip/variants/classical
+# golang.org/x/exp v0.0.0-20200228211341-fcea875c7e85
+## explicit
 # gonum.org/v1/gonum v0.6.2
+## explicit; go 1.12
 gonum.org/v1/gonum/blas
 gonum.org/v1/gonum/blas/blas64
 gonum.org/v1/gonum/blas/cblas128

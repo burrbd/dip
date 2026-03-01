@@ -168,18 +168,14 @@ Support strengths are calculated once before resolution begins (`OrderHandler.Ap
 
 ---
 
-## Future: Bot Integration
+## Bot Layer
 
-The planned interface layer will sit on top of this engine:
+The full bot architecture is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-- **Slack**: slash commands (`/dip move A Vie-Bud`, `/dip map`, `/dip history`) via Slack's Events API or slash command webhooks
-- **Telegram**: inline commands via the Bot API
-- **Event log**: each turn is a sequence of events (OrderSubmitted, TurnResolved, UnitDefeated, etc.) stored in a database and replayable
-- **Map rendering**: generate an image of the board state for posting to the channel after each resolution
-- **Multi-player**: each country is controlled by a different Slack/Telegram user; the engine already models `Country` on units and orders
-- **Turn management**: deadline-based turn advancement, order collection phase, resolution phase
-
-New code for the bot layer should live in a new top-level package (e.g. `cmd/slackbot/` or `cmd/telegrambot/`) and import the engine packages — don't add bot concerns to the engine packages.
+The bot uses [godip](https://github.com/zond/godip) as the adjudication engine (complete DATC
+compliance, all 3 phases) and sits on top of this engine package. New bot code lives under
+`cmd/`, `bot/`, `engine/`, `session/`, `events/`, `dipmap/`, and `platform/` — never inside
+the engine packages (`game/`, `game/order/`, `game/order/board/`).
 
 ---
 

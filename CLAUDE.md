@@ -2,84 +2,197 @@
 
 ## Project Vision
 
-This is a Diplomacy game engine intended to become a **Slack or Telegram bot**. Players submit moves via slash commands (e.g. `/move A Vie-Bud`), view the board map, and see the move history. The game is modelled as an **event log** — each turn's orders and resolutions are recorded as events, enabling replay, history browsing, and audit.
+This repo is a **Diplomacy messenger bot** — players submit moves via slash commands (e.g. `/order A Vie-Bud`), view the board map, and see move history. Each channel hosts exactly one game. The game state is modelled as an **event log**: structured JSON snapshots posted to the channel after each phase resolution serve as the audit trail and persistence layer (no external database required).
 
-This repo is the backend engine. The bot layer (Slack/Telegram integration, event log storage, map rendering) is the next major piece of work.
+**Adjudication is handled by [godip](https://github.com/zond/godip)**, which provides complete DATC compliance across movement, retreat, and adjustment phases. This repo's job is the bot layer on top of godip: command parsing, session management, event logging, map rendering, and platform integration (Slack, Telegram).
+
+The full bot architecture is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---
 
-## DATC: The Canonical Rules Reference
+## Build Plan
 
-The **Diplomacy Adjudicator Test Cases (DATC)** by Lucas B. Kruijswijk are the canonical specification for correct Diplomacy adjudication. Every resolution rule in this engine must conform to the DATC. The full document is at: https://web.inter.nl.net/users/L.B.Kruijswijk/#5
+Ordered stories toward a working messenger bot. Work through them in sequence — each story is a discrete, shippable unit that unblocks the next.
 
-A copy of the DATC is checked in at `DATC.txt` for offline reference.
+### Story 1 — godip Engine Adapter
+**Goal:** Thin wrapper around godip that hides its internal state types from the rest of the bot.
 
-The DATC is organised into sections:
+**Files:** `engine/adapter.go`, `engine/phases.go`, `engine/parser.go`, `engine/winner.go`
 
-| Section | Topic | Engine dependency |
-|---------|-------|-------------------|
-| 6.A | Basic checks (illegal moves, simple bounces) | Army model (partial), fleet model |
-| 6.B | Coastal issues | Fleet model + coast designators |
-| 6.C | Circular movement | Army model (partial), convoy |
-| 6.D | Supports and dislodges | Army model (partial), fleet model, convoy, country rules |
-| 6.E | Head-to-head battles and beleaguered garrison | Head-to-head algorithm, fleet model |
-| 6.F | Convoys | Convoy model |
-| 6.G | Convoying to adjacent provinces | Convoy model + adjacent-convoy rules |
+**Acceptance criteria:**
+- `engine.NewGame(variant)` creates a godip `state.State` and returns an opaque `Engine`
+- `Engine.SubmitOrder(nation, orderText)` parses via `classical.Parser` and stages the order
+- `Engine.Resolve()` calls godip's adjudicator and returns a result summary
+- `Engine.Advance()` calls `Next()`, fills NMR orders via `DefaultOrder()`, skips empty retreat/adjustment phases
+- `Engine.SoloWinner()` returns the winning nation or empty string
+- All public functions have unit tests
 
-### DATC Implementation Order
+---
 
-Work through the DATC in this order. Each phase has a set of integration tests in `game/resolver_integration_test.go` — uncomment the relevant block, watch it fail, implement the feature, watch it pass.
+### Story 2 — Event Log
+**Goal:** Write and read structured JSON events from the chat channel history.
 
-**Phase 1 — Army resolution (done/in progress)**
-Tests: 6.A.11, 6.A.12, 6.C.1–6.C.3, 6.D.1–6.D.5, 6.D.9, 6.D.14, 6.D.15, 6.D.21, 6.D.25, 6.D.26, 6.D.33
-These use only army moves, holds, and supports on the existing land territory map.
-Uncomment the block marked `// Phase 1` in the integration test file.
+**Files:** `events/types.go`, `events/log.go`, `events/replay.go`
 
-**Phase 2 — Country/self-dislodgement rules**
-Tests: 6.D.10, 6.D.11, 6.D.12, 6.D.13, 6.D.20
-A unit may not dislodge a unit of the same power, even with foreign help. Requires tracking unit nationality and comparing it during conflict resolution.
-Entry points: `game/resolver_main_phase.go`, `game/order_handler.go`.
+**Event types:** `GameCreated`, `PlayerJoined`, `GameStarted`, `OrderSubmitted`, `PhaseResolved`, `PhaseSkipped`, `NMRRecorded`, `DrawProposed`, `DrawVoted`, `GameEnded`
 
-**Phase 3 — Head-to-head battle algorithm**
-Tests: 6.E.1–6.E.15
-When two units move into each other's territories simultaneously, they fight a head-to-head battle. A dislodged head-to-head loser has no effect on the winner's origin territory. The current simultaneous-pass algorithm does not correctly model this; it needs a dedicated head-to-head pre-pass before general conflict resolution.
-Entry points: `game/resolver_main_phase.go`.
+**Acceptance criteria:**
+- `events.Write(channelID, event)` posts a JSON-encoded event message to the channel
+- `events.Scan(channelID)` reads channel history and returns typed events in order
+- `events.Rebuild(channelID)` finds the last `PhaseResolved` or `GameStarted` snapshot, calls `state.Load()`, then replays subsequent `OrderSubmitted` events as staged orders
+- Unit tests cover serialization round-trips and replay logic
 
-**Phase 4 — Fleet model and coastal territories**
-Tests: 6.A.1–6.A.10, 6.B.1–6.B.15, remaining 6.D (fleet-based), remaining 6.E
-Fleets move along sea routes; adjacency differs from armies. Requires:
-- Sea territory additions to the board (`game/order/board/territory.go`)
-- `CreateFleetGraph()` analogous to `CreateArmyGraph()`
-- Coast designators on coastal territories (e.g. `Spain(nc)`, `Spain(sc)`)
-- `ValidateMove` switching on unit type
-Entry points: `game/order/board/territory.go`, `game/order/validator.go`.
+---
 
-**Phase 5 — Convoy model**
-Tests: 6.C.4–6.C.9, 6.D.6–6.D.8, 6.D.16, 6.D.27–6.D.32, 6.F.1–6.F.25, 6.G.1–6.G.10
-An army can be convoyed across sea territories via a chain of fleets. A convoy is disrupted if any fleet in the chain is dislodged. Paradox cases (6.F.14+) require the Szykman rule (preferred by the DATC author).
-Entry points: `game/resolver_main_phase.go`, `game/order_handler.go`, `game/order/order.go`.
+### Story 3 — Session Management
+**Goal:** Own the lifecycle of a single game within a channel.
+
+**Files:** `session/session.go`, `session/store.go`, `session/lifecycle.go`
+
+**Acceptance criteria:**
+- `Session` struct holds: current phase, staged orders map, player→nation map, deadline timer, GM user ID
+- `session.Load(channelID)` rebuilds session from event log (via `events.Rebuild`)
+- `session.AdvanceTurn()` runs: collect staged orders → NMR fill → `Engine.Resolve()` → post `PhaseResolved` event → notify players → `Engine.Advance()` → start deadline timer for next phase
+- Deadline timer fires `AdvanceTurn()` automatically when it expires
+- Unit tests cover timer cancellation and state transitions
+
+---
+
+### Story 4 — Bot Command Router + Game Setup
+**Goal:** Platform-agnostic command dispatch with access control; implement game setup commands.
+
+**Files:** `bot/commands.go`, `bot/formatter.go`
+
+**Commands:** `/newgame [settings]`, `/join [country]`, `/start`
+
+**Acceptance criteria:**
+- `bot.Dispatch(cmd)` routes to the correct handler based on command name and current phase
+- Access control: `/start` and GM commands require the caller to be the GM
+- `/newgame` posts `GameCreated` event, sets GM to caller
+- `/join` posts `PlayerJoined` event; rejects if game already started or nation taken
+- `/start` validates 2–7 players joined, posts `GameStarted` with `godip.Dump()` snapshot, starts Spring Movement deadline
+- `bot.Format*` helpers render results and board state as plain text
+- Unit tests use a mock channel/session
+
+---
+
+### Story 5 — Movement Phase Commands
+**Goal:** Players submit and manage orders during the Movement phase.
+
+**Files:** `bot/commands.go` (extended)
+
+**Commands:** `/order <order-text>`, `/orders`, `/clear [order]`, `/submit`
+
+**Acceptance criteria:**
+- `/order` parses order text via `engine.Parser`, validates it belongs to the caller's nation, stages it
+- `/orders` lists the caller's staged orders for the current phase
+- `/clear` removes one or all of the caller's staged orders
+- `/submit` marks the caller's orders as final; once all nations have submitted, `AdvanceTurn()` fires immediately
+- Posts `OrderSubmitted` event after each `/order`
+- Unit tests cover invalid orders, wrong phase, and early resolution trigger
+
+---
+
+### Story 6 — Retreat & Adjustment Commands
+**Goal:** Handle the Retreat and Adjustment phases.
+
+**Files:** `bot/commands.go` (extended)
+
+**Commands:** `/retreat <unit> <province>`, `/disband <unit>`, `/build <unit-type> <province>`, `/waive`
+
+**Acceptance criteria:**
+- Retreat commands only accepted during Retreat phase; adjustment commands only during Adjustment phase
+- `/retreat` and `/disband` validated against godip's valid retreat destinations
+- `/build` validates supply-centre ownership and build slot availability
+- `/waive` stages a waive order for one available build
+- Auto-disband via godip `PostProcess` for unordered retreat units
+- Unit tests cover phase-guard rejections and NMR auto-fill
+
+---
+
+### Story 7 — Info Commands
+**Goal:** Players and observers can inspect game state at any time.
+
+**Files:** `bot/commands.go` (extended), `bot/autocomplete.go`
+
+**Commands:** `/map [territory [n]]`, `/status`, `/history <turn>`, `/help [command]`
+
+**Acceptance criteria:**
+- `/status` shows current phase, year, SC counts, and order submission status per nation
+- `/history <turn>` fetches the `PhaseResolved` event for that turn from the event log and formats results
+- `/map` with no args posts the current board PNG (via `dipmap.Render`)
+- `/map Vienna 1` highlights Vienna and all adjacent provinces (BFS radius 1 via `dipmap.Neighborhood`)
+- `/help` lists all commands; `/help <command>` shows detailed usage
+- `bot.Autocomplete(session, nation)` returns valid order strings for the nation's units
+
+---
+
+### Story 8 — Draw & GM Commands
+**Goal:** End-game draw mechanics and game-master admin tools.
+
+**Files:** `bot/commands.go` (extended)
+
+**Commands:** `/draw`, `/concede`, `/pause`, `/resume`, `/extend <duration>`, `/force-resolve`, `/boot <nation>`, `/replace <nation> <user>`
+
+**Acceptance criteria:**
+- `/draw` proposes a draw; posts `DrawProposed`; resolves to `GameEnded` when all remaining nations vote yes via `/draw`
+- `/concede` ends the game immediately with that nation conceding; posts `GameEnded`
+- `/pause` cancels the deadline timer; `/resume` restarts it
+- `/extend <duration>` adds time to the current deadline
+- `/force-resolve` triggers `AdvanceTurn()` immediately (GM only)
+- `/boot <nation>` removes a player; their orders are NMR'd each turn going forward
+- `/replace <nation> <user>` transfers a nation to a new player
+
+---
+
+### Story 9 — Map Rendering
+**Goal:** Convert godip's SVG map assets to PNG and post to channel.
+
+**Files:** `dipmap/render.go`, `dipmap/highlight.go`, `dipmap/neighborhood.go`
+
+**Acceptance criteria:**
+- `dipmap.Render(state)` converts godip's SVG for the current board state to a PNG byte slice
+- `dipmap.Highlight(svg, provinces)` colours a set of provinces distinctly
+- `dipmap.Neighborhood(graph, territory, n)` returns all provinces within `n` hops via BFS over `graph.Edges()`; `n=0` returns only the territory itself
+- Unit tests cover BFS boundary cases (n=0, n=1, disconnected graph)
+
+---
+
+### Story 10 — Slack Platform Adapter
+**Goal:** Deploy the bot as a Slack app.
+
+**Files:** `platform/slack/adapter.go`, `cmd/slackbot/main.go`
+
+**Acceptance criteria:**
+- Handles Slack slash command HTTP requests; parses into `bot.Command` values
+- Handles Slack Events API payloads (URL verification, event dispatch)
+- Posts text responses and PNG images back to Slack channels
+- `cmd/slackbot/main.go` wires up HTTP server, Slack signing-secret verification, and `bot.Dispatch`
+
+---
+
+### Story 11 — Telegram Platform Adapter
+**Goal:** Deploy the bot as a Telegram bot.
+
+**Files:** `platform/telegram/adapter.go`, `cmd/telegrambot/main.go`
+
+**Acceptance criteria:**
+- Handles Telegram Bot API webhook updates; parses `/command` messages into `bot.Command` values
+- Posts text responses and PNG images back to Telegram chats via Bot API
+- `cmd/telegrambot/main.go` wires up HTTP server and `bot.Dispatch`
 
 ---
 
 ## Development Philosophy
 
-**TDD with 100% test coverage is non-negotiable.** The workflow is strictly red → green → refactor:
+**TDD with 100% test coverage is non-negotiable.** The workflow is red → green → refactor:
 
-1. **Red** — uncomment the next DATC spec (or write a new unit test), run `go test`, confirm it fails for the right reason.
-2. **Green** — write the minimal code to make it pass; don't over-engineer.
-3. **Refactor** — once green, simplify and optimise. The adjudication algorithms in this domain are well-studied; feel free to read and borrow ideas from other open-source Diplomacy implementations (e.g. [jDip](https://jdip.sourceforge.net), [pydipcc](https://github.com/diplomacy/diplomacy), [godip](https://github.com/zond/godip)). Prefer clarity over cleverness, but don't leave a naïve O(n²) loop when a clean linear pass exists.
+1. **Red** — write a failing test for the story's acceptance criteria first
+2. **Green** — write the minimal code to make it pass
+3. **Refactor** — simplify and remove duplication
 
 - `go test -v -cover -race ./...` must pass at all times
-- Never commit with a failing test or with `focus: true` left set
-
-The integration test file (`game/resolver_integration_test.go`) is the canonical way to specify new resolution scenarios. DATC tests are listed in DATC order with unimplemented ones commented out. To work on the next DATC case:
-1. Check CLAUDE.md to see which phase is next
-2. Find the corresponding commented-out spec in `game/resolver_integration_test.go`
-3. Uncomment it, run tests, watch it fail
-4. Implement until green
-5. Refactor — simplify the algorithm, remove duplication, consult other implementations for inspiration
-
-The `focus` field on `spec` can be set to `true` to run only that scenario during development — remember to unset it before committing.
+- Never commit with a failing test
 
 ---
 
@@ -96,65 +209,64 @@ CI runs this same command via CircleCI (`.circleci/config.yml`).
 ## Architecture
 
 ```
-game/order/board/   — Territory map, unit types, position state machine
-game/order/         — Order data structures, string decoder, validator
-game/               — Order application (OrderHandler) and conflict resolution (ResolveOrders)
+cmd/
+  slackbot/          — Slack entry point (Story 10)
+  telegrambot/       — Telegram entry point (Story 11)
+
+bot/
+  commands.go        — platform-agnostic command router + access control (Stories 4–8)
+  autocomplete.go    — generate valid orders for current state (Story 7)
+  formatter.go       — format results and board state as text (Story 4)
+
+engine/
+  adapter.go         — thin wrapper around godip state.State (Story 1)
+  phases.go          — phase advance, NMR fill, phase-skip logic (Story 1)
+  parser.go          — text order → godip via classical.Parser (Story 1)
+  winner.go          — solo win / draw detection (Story 1)
+
+session/
+  session.go         — Session struct: phase, staged orders, player map, deadline, GM (Story 3)
+  store.go           — serialize/deserialize via godip Dump/Load (Story 3)
+  lifecycle.go       — turn advance orchestration (Story 3)
+
+events/
+  types.go           — event type constants + structs (Story 2)
+  log.go             — write/read JSON events from channel (Story 2)
+  replay.go          — rebuild state from snapshot + pending orders (Story 2)
+
+dipmap/
+  render.go          — SVG → PNG via godip SVG assets (Story 9)
+  highlight.go       — colour a set of provinces (Story 9)
+  neighborhood.go    — BFS expansion to radius n (Story 9)
+
+platform/
+  slack/adapter.go   — Slack slash commands + Events API (Story 10)
+  telegram/adapter.go — Telegram Bot API (Story 11)
+
+game/               — [LEGACY] Partial custom adjudicator (preserved, not active development)
+  order/board/      — Territory map, unit types, position state machine
+  order/            — Order structs, decoder, validator
 ```
 
-### Data flow for a turn
+### Data flow for a turn (bot layer)
 
 ```
-Raw order string (e.g. "A Vie-Bud")
-  → order.Decode()          — parse into typed order struct
-  → order.Validator         — validate adjacency and ownership
-  → game.OrderHandler       — apply orders to PositionManager (move/hold + support counts)
-  → game.ResolveOrders()    — resolve conflicts iteratively until stable
-  → board.PositionManager   — query final positions and defeated units
+Slash command string (e.g. "/order A Vie-Bud")
+  → platform adapter     — parse into bot.Command
+  → bot.Dispatch()       — access control + route to handler
+  → session.Session      — stage order / advance turn
+  → engine.Engine        — submit to godip, resolve, advance phase
+  → events.Write()       — post PhaseResolved snapshot to channel
+  → dipmap.Render()      — post updated board PNG to channel
 ```
-
-### Key types
-
-| Type | Package | Purpose |
-|---|---|---|
-| `Territory` | `board` | 56-territory map with adjacency edges |
-| `Unit` | `board` | Army or Fleet, owned by a country |
-| `PositionManager` | `board` | Tracks unit positions through a turn; records Move/Hold/Bounce/Defeated events |
-| `Move`, `Hold`, `MoveSupport`, `HoldSupport`, `MoveConvoy` | `order` | Typed order structs |
-| `Set` | `order` | Collection of all orders for one turn |
-| `Validator` | `order` | Graph-based adjacency validation |
-| `OrderHandler` | `game` | Applies orders + calculates support strengths |
-| `ResolveOrders` | `game` | Iterative conflict resolution algorithm |
-
-### PositionEvent state machine
-
-```
-UnitPlaced → Moved | Held
-Moved      → Bounced (on conflict loss)
-Held       → Defeated (on conflict loss)
-```
-
-### Conflict resolution algorithm (`ResolveOrders`)
-
-Each pass computes tentative outcomes for all conflicts simultaneously, then applies them. Passes repeat until no conflicts remain.
-
-1. Collect all conflict groups (territorial and counter-attack)
-2. Sort each group by strength descending
-3. If one unit has strictly greater strength → defeats all others at that location
-4. If tied → bounce all non-origin units; origin units stay
-5. Apply all outcomes simultaneously, then repeat
-
-Support strengths are calculated once before resolution begins (`OrderHandler.ApplyOrders`). Support is cut statically: any move targeting a supporter's territory cuts its support (DATC standard), unless the cutter is attacking from the territory being attacked (head-to-head — see `moveSupportCut`).
-
-**Known gap:** Dislodgement during resolution does not retroactively cut the dislodged unit's support (DATC 6.D.17). Implementing this requires recalculating support strengths after each dislodgement. See Phase 3/4 tasks above.
 
 ---
 
 ## Package Conventions
 
-- **Interfaces over concrete types** — `Manager`, `validator`, `simpleGraph` keep packages decoupled and testable
-- **Value semantics for orders** — order structs are passed by value, never mutated
-- **History-based position tracking** — `PositionManager` keeps a history slice per unit enabling bounce-back
-- **Graph adjacency for validation** — gonum undirected graph (`CreateArmyGraph`) represents territory connectivity
+- **Interfaces over concrete types** — keep packages decoupled and testable
+- **Value semantics for orders** — order structs passed by value, never mutated
+- **No external database** — channel message history is the persistence layer; state rebuilt via event replay
 
 ---
 
@@ -162,20 +274,39 @@ Support strengths are calculated once before resolution begins (`OrderHandler.Ap
 
 - Use `github.com/cheekybits/is` for assertions: `is.NoErr(err)`, `is.Equal(a, b)`, `is.NotNil(v)`
 - Unit tests live alongside the code they test (`_test.go` files in same package or `_test` package)
-- Integration tests live in `game/resolver_integration_test.go` using the `spec` table pattern
-- Mock interfaces inline in test files (see `validator_test.go` for `mockGraph`)
-- Table-driven tests for decoders and validators
+- Mock interfaces inline in test files
+- Table-driven tests for parsers and validators
 
 ---
 
-## Bot Layer
+## Legacy: Custom Adjudicator
 
-The full bot architecture is documented in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> **This work is preserved but is no longer the active development path.** Adjudication has been outsourced to godip. The `game/` package code below is kept for reference and may be useful for understanding Diplomacy adjudication concepts.
 
-The bot uses [godip](https://github.com/zond/godip) as the adjudication engine (complete DATC
-compliance, all 3 phases) and sits on top of this engine package. New bot code lives under
-`cmd/`, `bot/`, `engine/`, `session/`, `events/`, `dipmap/`, and `platform/` — never inside
-the engine packages (`game/`, `game/order/`, `game/order/board/`).
+The `game/` package implements a partial custom Diplomacy adjudicator based on the DATC (Diplomacy Adjudicator Test Cases) by Lucas B. Kruijswijk. The full DATC document is at https://web.inter.nl.net/users/L.B.Kruijswijk/#5 and a local copy is at `DATC.txt`.
+
+### Completed work
+
+- **Phase 1 — Army resolution (done/in progress)**
+  Tests: 6.A.11, 6.A.12, 6.C.1–6.C.3, 6.D.1–6.D.5, 6.D.9, 6.D.14, 6.D.15, 6.D.21, 6.D.25, 6.D.26, 6.D.33
+
+### Remaining phases (not planned)
+
+- Phase 2 — Country/self-dislodgement rules (6.D.10–6.D.13, 6.D.20)
+- Phase 3 — Head-to-head battle algorithm (6.E.1–6.E.15)
+- Phase 4 — Fleet model and coastal territories (6.A.1–6.A.10, 6.B.1–6.B.15)
+- Phase 5 — Convoy model (6.C.4–6.C.9, 6.F.1–6.F.25, 6.G.1–6.G.10)
+
+### Key types (legacy)
+
+| Type | Package | Purpose |
+|---|---|---|
+| `Territory` | `board` | 56-territory map with adjacency edges |
+| `Unit` | `board` | Army or Fleet, owned by a country |
+| `PositionManager` | `board` | Tracks unit positions through a turn |
+| `Move`, `Hold`, `MoveSupport`, `HoldSupport`, `MoveConvoy` | `order` | Typed order structs |
+| `OrderHandler` | `game` | Applies orders + calculates support strengths |
+| `ResolveOrders` | `game` | Iterative conflict resolution algorithm |
 
 ---
 
@@ -187,5 +318,6 @@ go 1.12
 ```
 
 Key dependencies:
-- `gonum.org/v1/gonum` — graph library for territory adjacency
+- `github.com/zond/godip` — Diplomacy adjudication engine (DATC-compliant, all phases)
+- `gonum.org/v1/gonum` — graph library (used in legacy `game/` package)
 - `github.com/cheekybits/is` — test assertions

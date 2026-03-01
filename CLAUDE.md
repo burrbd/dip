@@ -8,6 +8,59 @@ This repo is the backend engine. The bot layer (Slack/Telegram integration, even
 
 ---
 
+## DATC: The Canonical Rules Reference
+
+The **Diplomacy Adjudicator Test Cases (DATC)** by Lucas B. Kruijswijk are the canonical specification for correct Diplomacy adjudication. Every resolution rule in this engine must conform to the DATC. The full document is at: https://web.inter.nl.net/users/L.B.Kruijswijk/#5
+
+A copy of the DATC is checked in at `DATC.txt` for offline reference.
+
+The DATC is organised into sections:
+
+| Section | Topic | Engine dependency |
+|---------|-------|-------------------|
+| 6.A | Basic checks (illegal moves, simple bounces) | Army model (partial), fleet model |
+| 6.B | Coastal issues | Fleet model + coast designators |
+| 6.C | Circular movement | Army model (partial), convoy |
+| 6.D | Supports and dislodges | Army model (partial), fleet model, convoy, country rules |
+| 6.E | Head-to-head battles and beleaguered garrison | Head-to-head algorithm, fleet model |
+| 6.F | Convoys | Convoy model |
+| 6.G | Convoying to adjacent provinces | Convoy model + adjacent-convoy rules |
+
+### DATC Implementation Order
+
+Work through the DATC in this order. Each phase has a set of integration tests in `game/resolver_integration_test.go` — uncomment the relevant block, watch it fail, implement the feature, watch it pass.
+
+**Phase 1 — Army resolution (done/in progress)**
+Tests: 6.A.11, 6.A.12, 6.C.1–6.C.3, 6.D.1–6.D.5, 6.D.9, 6.D.14, 6.D.15, 6.D.21, 6.D.25, 6.D.26, 6.D.33
+These use only army moves, holds, and supports on the existing land territory map.
+Uncomment the block marked `// Phase 1` in the integration test file.
+
+**Phase 2 — Country/self-dislodgement rules**
+Tests: 6.D.10, 6.D.11, 6.D.12, 6.D.13, 6.D.20
+A unit may not dislodge a unit of the same power, even with foreign help. Requires tracking unit nationality and comparing it during conflict resolution.
+Entry points: `game/resolver_main_phase.go`, `game/order_handler.go`.
+
+**Phase 3 — Head-to-head battle algorithm**
+Tests: 6.E.1–6.E.15
+When two units move into each other's territories simultaneously, they fight a head-to-head battle. A dislodged head-to-head loser has no effect on the winner's origin territory. The current simultaneous-pass algorithm does not correctly model this; it needs a dedicated head-to-head pre-pass before general conflict resolution.
+Entry points: `game/resolver_main_phase.go`.
+
+**Phase 4 — Fleet model and coastal territories**
+Tests: 6.A.1–6.A.10, 6.B.1–6.B.15, remaining 6.D (fleet-based), remaining 6.E
+Fleets move along sea routes; adjacency differs from armies. Requires:
+- Sea territory additions to the board (`game/order/board/territory.go`)
+- `CreateFleetGraph()` analogous to `CreateArmyGraph()`
+- Coast designators on coastal territories (e.g. `Spain(nc)`, `Spain(sc)`)
+- `ValidateMove` switching on unit type
+Entry points: `game/order/board/territory.go`, `game/order/validator.go`.
+
+**Phase 5 — Convoy model**
+Tests: 6.C.4–6.C.9, 6.D.6–6.D.8, 6.D.16, 6.D.27–6.D.32, 6.F.1–6.F.25, 6.G.1–6.G.10
+An army can be convoyed across sea territories via a chain of fleets. A convoy is disrupted if any fleet in the chain is dislodged. Paradox cases (6.F.14+) require the Szykman rule (preferred by the DATC author).
+Entry points: `game/resolver_main_phase.go`, `game/order_handler.go`, `game/order/order.go`.
+
+---
+
 ## Development Philosophy
 
 **TDD with 100% test coverage is non-negotiable.** Every change starts with a failing test. No production code is written without a corresponding test that drove it.
@@ -17,7 +70,11 @@ This repo is the backend engine. The bot layer (Slack/Telegram integration, even
 - Refactor if needed, keeping tests green
 - `go test -v -cover -race ./...` must pass at all times
 
-The integration test file (`game/resolver_integration_test.go`) is the canonical way to specify new resolution scenarios. Add a `spec` entry with a human-readable `description`, the orders, and expected positions — then implement until it passes.
+The integration test file (`game/resolver_integration_test.go`) is the canonical way to specify new resolution scenarios. DATC tests are listed in DATC order with unimplemented ones commented out. To work on the next DATC case:
+1. Check CLAUDE.md to see which phase is next
+2. Find the corresponding commented-out spec in `game/resolver_integration_test.go`
+3. Uncomment it, run tests, watch it fail
+4. Implement until green
 
 The `focus` field on `spec` can be set to `true` to run only that scenario during development — remember to unset it before committing.
 
@@ -75,13 +132,17 @@ Held       → Defeated (on conflict loss)
 
 ### Conflict resolution algorithm (`ResolveOrders`)
 
-1. Find first conflict (multiple units in same territory, or counter-attack)
-2. Sort by strength descending
-3. If one unit has strictly greater strength → defeats all others at that location
-4. If tied → bounce all attackers; defeat any attacker already at that territory (nowhere to retreat)
-5. Repeat until no conflicts remain
+Each pass computes tentative outcomes for all conflicts simultaneously, then applies them. Passes repeat until no conflicts remain.
 
-**Known limitation:** This iterative one-conflict-at-a-time model is fundamentally incomplete. Many Diplomacy scenarios involve *interdependent* conflicts: whether A wins at X depends on whether B's support holds, which depends on whether B gets cut, which depends on A. Sequential resolution produces wrong outcomes for these cases regardless of ordering. The correct approach is a **simultaneous fixed-point algorithm**: in each pass, recompute all support strengths and tentative outcomes across the whole board, then repeat until the state stabilises. See the DATC (Diplomacy Adjudicator Test Cases) for the canonical test suite and algorithm specification.
+1. Collect all conflict groups (territorial and counter-attack)
+2. Sort each group by strength descending
+3. If one unit has strictly greater strength → defeats all others at that location
+4. If tied → bounce all non-origin units; origin units stay
+5. Apply all outcomes simultaneously, then repeat
+
+Support strengths are calculated once before resolution begins (`OrderHandler.ApplyOrders`). Support is cut statically: any move targeting a supporter's territory cuts its support (DATC standard), unless the cutter is attacking from the territory being attacked (head-to-head — see `moveSupportCut`).
+
+**Known gap:** Dislodgement during resolution does not retroactively cut the dislodged unit's support (DATC 6.D.17). Implementing this requires recalculating support strengths after each dislodgement. See Phase 3/4 tasks above.
 
 ---
 
@@ -101,87 +162,6 @@ Held       → Defeated (on conflict loss)
 - Integration tests live in `game/resolver_integration_test.go` using the `spec` table pattern
 - Mock interfaces inline in test files (see `validator_test.go` for `mockGraph`)
 - Table-driven tests for decoders and validators
-
----
-
-## Open Tasks
-
-Tasks are listed in priority order. Each one follows the TDD workflow: write a failing integration spec in `game/resolver_integration_test.go` (or a unit test alongside the relevant file), then implement until green.
-
----
-
-### 1. Replace iterative resolver with a simultaneous fixed-point algorithm
-
-**Why it matters:** The current `ResolveOrders` loop finds one conflict, resolves it, and repeats. Conflicts with circular support dependencies (e.g. A supports B into X, B's support is cut only if A fails) produce wrong outcomes because the algorithm resolves them in sequence rather than simultaneously.
-
-**Approach:**
-- Each resolution pass should compute tentative outcomes for *all* conflicts at once, treating unresolved conflicts as "pending"
-- Support strengths are only counted from units not yet cut/disrupted
-- Repeat passes until no outcomes change (fixed point)
-- The DATC (https://web.inter.nl.net/users/L.B.Kruijswijk/#5) defines the canonical algorithm and 60+ test cases; use those as specs
-
-**Entry points:** `game/resolver.go` (`ResolveOrders`), `game/handler.go` (`OrderHandler`)
-
----
-
-### 2. Implement hold-support resolution
-
-**Why it matters:** `HoldSupport` order structs are decoded and validated but `ResolveOrders` never applies them — a held unit always defends with strength 1 regardless of support.
-
-**Approach:**
-- In `OrderHandler.ApplyOrders`, accumulate hold-support strength onto the holding unit (same pattern as move-support)
-- Add integration specs covering: supported hold repels unsupported attack; supported hold loses to stronger attack
-
-**Entry points:** `game/handler.go`, `game/order/order.go` (`HoldSupport`)
-
----
-
-### 3. Make the counter-attack conflict key separator explicit
-
-**Why it matters:** `appendCounterAttackConflict` encodes the pair of territories as `"aaa.bbb"` and `Conflict()` detects it with `strings.Contains(key, ".")`. This works because no territory abbreviation contains `"."`, but the coupling is implicit.
-
-**Approach:** Either (a) define a named constant for the separator and document the invariant, or (b) keep counter-attack and territorial conflict groups in separate maps so the type is structural rather than encoded in the key string.
-
-**Entry point:** `game/order/board/manager.go`
-
----
-
-### 4. Model territory coasts and implement fleet movement
-
-**Why it matters:** Fleets move along sea routes and can only enter coastal territories via the correct coast (e.g. Spain(NC) vs Spain(SC)). `ValidateMove` currently only calls `CreateArmyGraph`; fleet orders always pass adjacency validation.
-
-**Approach:**
-- Extend `Territory` to carry a coast designator (e.g. `Coast string`, values `""`, `"nc"`, `"sc"`)
-- Build a fleet/sea adjacency graph (`CreateFleetGraph`) analogous to `CreateArmyGraph`
-- Switch `ValidateMove` on unit type to use the correct graph
-- Add DATC coast-movement specs as integration tests
-
-**Entry points:** `game/order/board/territory.go`, `game/order/validator.go`
-
----
-
-### 5. Implement convoy resolution
-
-**Why it matters:** `MoveConvoy` is decoded but ignored during resolution. Armies can't cross sea territories without it.
-
-**Approach:**
-- A convoy order `F Mid C A Lon-Bre` means the fleet threads the army through its sea territory
-- During resolution, a chain of convoy orders forms a route; if any fleet in the chain is dislodged the convoy fails and the army bounces
-- Add integration specs for: successful convoy; convoy disrupted by attack on fleet
-
-**Entry points:** `game/resolver.go`, `game/handler.go`, `game/order/order.go` (`MoveConvoy`)
-
----
-
-### 6. Graceful invalid-order handling
-
-**Why it matters:** `order.Decode` and `order.Validator` return errors, but there is no path to surface these to a caller (bot layer) cleanly. Invalid orders currently cause silent no-ops or panics.
-
-**Approach:**
-- `game.OrderHandler` should collect validation errors per order and expose them alongside the resolved positions
-- Design the error type so the bot layer can report per-player which orders were rejected and why
-
-**Entry points:** `game/handler.go`, `game/order/validator.go`
 
 ---
 

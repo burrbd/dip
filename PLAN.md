@@ -22,7 +22,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 
 - [x] Story 1 — godip Engine Adapter
 - [x] Story 2 — Event Log
-- [ ] Story 3 — Session Management
+- [x] Story 3 — Session Management
 - [ ] Story 4 — Bot Command Router + Game Setup
 - [ ] Story 5 — Movement Phase Commands
 - [ ] Story 6 — Retreat & Adjustment Commands
@@ -31,6 +31,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [ ] Story 9 — Map Rendering
 - [ ] Story 10 — Slack Platform Adapter
 - [ ] Story 11 — Telegram Platform Adapter
+- [ ] Story 12 — Lambda / EventBridge Deployment
 
 ---
 
@@ -82,6 +83,12 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - Deadline timer fires `AdvanceTurn()` automatically when it expires
 - Unit tests cover timer cancellation and state transitions
 
+> **Note (refactor pending — Story 12):** The current implementation uses `timer *time.Timer` +
+> `sync.Mutex`. Before Story 10, this must be refactored to a `Scheduler` interface
+> (`LocalScheduler` / `EventBridgeScheduler`) as described in ARCHITECTURE.md. `AdvanceTurn()`
+> must also gain an idempotency check (no-op if `PhaseResolved` already exists for the current
+> phase). These changes are tracked in Story 12.
+
 ---
 
 ### Story 4 — Bot Command Router + Game Setup
@@ -113,13 +120,16 @@ Never mark a story done if any test is failing or any criterion is unmet.
 **Commands:** `/order <order-text>`, `/orders`, `/clear [order]`, `/submit`
 
 **Acceptance criteria:**
-- `/order` parses order text via `engine.Parser`, validates it belongs to the caller's nation, stages it
-- `/orders` lists the caller's staged orders for the current phase
-- `/clear` removes one or all of the caller's staged orders
-- `/submit` marks the caller's orders as final; once all nations have submitted,
-  `AdvanceTurn()` fires immediately
-- Posts `OrderSubmitted` event after each `/order`
-- Unit tests cover invalid orders, wrong phase, and early resolution trigger
+- `/order` is accepted only via DM to the bot (not in the game channel); parses order text via
+  `engine.Parser`, validates it belongs to the caller's nation, stages it
+- `/orders` (via DM) lists the caller's staged orders for the current phase
+- `/clear` (via DM) removes one or all of the caller's staged orders
+- `/submit` (via DM) marks the caller's orders as final; after each `/submit`, the handler reads
+  all player DM threads to check whether every nation has submitted — if so, `AdvanceTurn()`
+  fires immediately and the scheduler deadline is cancelled
+- Posts `OrderSubmitted` event to the player's DM thread (not the game channel)
+- Game channel receives no `OrderSubmitted` events — only the `PhaseResolved` result
+- Unit tests cover invalid orders, wrong phase, DM-only enforcement, and early resolution trigger
 
 ---
 
@@ -205,6 +215,8 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - Handles Slack slash command HTTP requests; parses into `bot.Command` values
 - Handles Slack Events API payloads (URL verification, event dispatch)
 - Posts text responses and PNG images back to Slack channels
+- Implements `SendDM(userID, text)` and `DMHistory(userID)` on the Slack `Channel` adapter
+- Handles DM slash-command payloads (`channel_type = "im"`) and routes them to the order handler
 - `cmd/slackbot/main.go` wires up HTTP server, Slack signing-secret verification, and `bot.Dispatch`
 
 ---
@@ -218,4 +230,35 @@ Never mark a story done if any test is failing or any criterion is unmet.
 **Acceptance criteria:**
 - Handles Telegram Bot API webhook updates; parses `/command` messages into `bot.Command` values
 - Posts text responses and PNG images back to Telegram chats via Bot API
+- Implements `SendDM(userID, text)` and `DMHistory(userID)` on the Telegram `Channel` adapter
+- Handles private chat (`chat.type = "private"`) update payloads and routes them to the order handler
 - `cmd/telegrambot/main.go` wires up HTTP server and `bot.Dispatch`
+
+---
+
+### Story 12 — Lambda / EventBridge Deployment
+
+**Goal:** Refactor session scheduling to a `Scheduler` interface and wire up a Lambda entry
+point so the bot runs as a stateless FaaS application with externally managed phase deadlines.
+
+**Files:** `session/scheduler.go`, `platform/eventbridge/scheduler.go`, `cmd/lambdabot/main.go`
+
+**Acceptance criteria:**
+- `Scheduler` interface defined in `session/scheduler.go`:
+  ```
+  Schedule(channelID string, at time.Time) error
+  Cancel(channelID string) error
+  ```
+- `LocalScheduler` implementation wraps `time.AfterFunc`; used in tests and server deployments
+- `EventBridgeScheduler` implementation creates/deletes one-time AWS EventBridge Scheduler rules
+  named by `channelID`; rule target is the Lambda function ARN (from environment variable)
+- `Session.timer *time.Timer` and `Session.mu sync.Mutex` replaced by `Session.scheduler Scheduler`
+- `GameStarted` and `PhaseResolved` event structs gain `DeadlineAt time.Time` (serialised as RFC3339)
+- `AdvanceTurn()` gains an idempotency check: reads game channel history, no-ops if a
+  `PhaseResolved` event already exists for the current phase
+- `cmd/lambdabot/main.go` handles two event shapes:
+  - Platform webhook payload → parse command → `bot.Dispatch`
+  - `{"action": "advance_turn", "channel_id": "..."}` → `session.Load()` → `AdvanceTurn()`
+- Unit tests cover `LocalScheduler` fire/cancel, idempotency guard (duplicate advance no-ops),
+  and Lambda handler routing
+- `go test -v -cover -race ./...` passes

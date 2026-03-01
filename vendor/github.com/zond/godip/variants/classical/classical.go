@@ -91,6 +91,13 @@ func (s *classicalState) Dump() ([]byte, error) {
 	return []byte(`{}`), nil
 }
 
+// Load restores a game state from a JSON snapshot produced by Dump.
+// This stub implementation ignores the snapshot content and returns a new
+// classicalState in Spring 1901 Movement, sufficient for bot-layer tests.
+func Load(_ []byte) (godip.Adjudicator, error) {
+	return startClassical()
+}
+
 // classicalPhase is a stub Phase implementation.
 type classicalPhase struct {
 	typ    godip.PhaseType

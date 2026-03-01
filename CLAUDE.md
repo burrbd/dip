@@ -117,6 +117,59 @@ Key dependencies:
 - Tests that need access to unexported helpers (e.g. `fillNMR`, `isEmptyPhase`, `newFromVariant`) use `package engine` (not `package engine_test`) so they share the package namespace. This is the standard Go pattern for white-box testing.
 - 100% coverage means **all branches**, not just all lines — use `go tool cover -func` to check per-function coverage when the summary isn't 100%.
 
+### Timer tests and the race detector
+
+`time.AfterFunc` callbacks run in a new goroutine. The race detector will flag any
+unsynchronized access to shared state between the test goroutine and the callback
+goroutine. The established pattern:
+
+- Add a `sync.Mutex` (`mu`) to any struct that owns a `*time.Timer`.
+- Lock `mu` whenever reading or writing the timer field — including in tests that
+  set `s.timer` directly.
+- Use `sync.WaitGroup` (or a channel) to wait for the callback goroutine to finish
+  completely before making post-condition assertions.
+
+### Timer callback coverage
+
+Anonymous function literals passed to `time.AfterFunc` are counted as separate
+statements by the coverage tool. If the timer never fires during a test, the closure
+body is marked uncovered even though the outer function is 100% covered. The fix:
+extract the callback to a named method (e.g. `onDeadline()`) and call that from
+`time.AfterFunc`. The named method can then be called directly in a unit test
+without needing a real timer.
+
+### Recovering engine.Engine from events.Rebuild
+
+`events.Rebuild` returns `events.EngineState` (which only has `SubmitOrder`). If
+the calling code needs the full `engine.Engine` after rebuilding, capture the engine
+reference in the loader closure before passing the closure to `Rebuild`:
+
+```go
+var eng engine.Engine
+events.Rebuild(ch, channelID, func(snap []byte) (events.EngineState, error) {
+    e, err := loader(snap)
+    eng = e   // capture the concrete engine.Engine
+    return e, err
+})
+// eng is now the restored engine.Engine
+```
+
+### Covering error paths in stub-backed functions
+
+Stub functions (e.g. `classical.Load`) never return errors by design. Any wrapper
+that only delegates to the stub will have an unreachable error branch. The established
+pattern is to extract a private helper that accepts the dependency as a parameter:
+
+```go
+// Public entry point — always succeeds with the real stub.
+func Load(snap []byte) (Engine, error) { return loadFromSnapshot(snap, classical.Load) }
+
+// Testable helper — tests inject a failing loader to cover the error branch.
+func loadFromSnapshot(snap []byte, loader func([]byte) (godip.Adjudicator, error)) (Engine, error) { ... }
+```
+
+See `loadFromSnapshot` and `newFromVariant` in `engine/adapter.go` for examples.
+
 ---
 
 ## Legacy: Custom Adjudicator

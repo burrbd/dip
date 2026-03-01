@@ -341,6 +341,38 @@ func TestAdvance_SkipsEmptyAdjustment(t *testing.T) {
 	is.Equal(g.adj, godip.Adjudicator(springAdj))
 }
 
+func TestLoad_CreatesEngine(t *testing.T) {
+	is := is.New(t)
+	eng, err := Load([]byte(`{}`))
+	is.NoErr(err)
+	is.NotNil(eng)
+}
+
+func TestLoad_PropagatesLoaderError(t *testing.T) {
+	is := is.New(t)
+	failLoader := func(_ []byte) (godip.Adjudicator, error) {
+		return nil, errors.New("deserialise failed")
+	}
+	_, err := loadFromSnapshot([]byte(`{}`), failLoader)
+	is.Err(err)
+}
+
+func TestPhase_ReturnsFormattedString(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Movement, year: 1901, season: godip.Spring}
+	g := &game{adj: adj, parser: &mockParser{}}
+	is.Equal(g.Phase(), "Spring 1901 Movement")
+}
+
+func TestPhase_NilPhaseReturnsEmpty(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.phase = nil
+	g := &game{adj: adj, parser: &mockParser{}}
+	is.Equal(g.Phase(), "")
+}
+
 func TestIsEmptyPhase_NilPhase(t *testing.T) {
 	adj := newMockAdj()
 	adj.phase = nil

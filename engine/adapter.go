@@ -11,6 +11,21 @@ import (
 	"github.com/zond/godip/variants/classical"
 )
 
+// Load restores an Engine from a JSON snapshot produced by Dump.
+func Load(snapshot []byte) (Engine, error) {
+	return loadFromSnapshot(snapshot, classical.Load)
+}
+
+// loadFromSnapshot restores an Engine using loader to deserialise the snapshot.
+// Separated from Load so tests can inject a failing loader.
+func loadFromSnapshot(snapshot []byte, loader func([]byte) (godip.Adjudicator, error)) (Engine, error) {
+	adj, err := loader(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("engine: load snapshot: %w", err)
+	}
+	return &game{adj: adj, parser: classical.Parser}, nil
+}
+
 // Engine is the public interface for interacting with a running Diplomacy game.
 // All methods operate on the current game phase.
 type Engine interface {
@@ -26,6 +41,9 @@ type Engine interface {
 	SoloWinner() string
 	// Dump serialises the current game state to JSON for event-log storage.
 	Dump() ([]byte, error)
+	// Phase returns the current game phase as a human-readable string
+	// (e.g. "Spring 1901 Movement").
+	Phase() string
 }
 
 // ResolutionResult summarises what happened when a phase was adjudicated.
@@ -109,4 +127,14 @@ func (g *game) Resolve() (ResolutionResult, error) {
 // Dump serialises the current game state to JSON.
 func (g *game) Dump() ([]byte, error) {
 	return g.adj.Dump()
+}
+
+// Phase returns the current game phase as a human-readable string,
+// e.g. "Spring 1901 Movement". Returns "" if the phase is nil.
+func (g *game) Phase() string {
+	phase := g.adj.Phase()
+	if phase == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s %d %s", phase.Season(), phase.Year(), phase.Type())
 }

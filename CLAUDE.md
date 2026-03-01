@@ -86,13 +86,36 @@ CI runs this same command via CircleCI (`.circleci/config.yml`).
 
 ```
 module github.com/burrbd/dip
-go 1.12
+go 1.21
 ```
 
 Key dependencies:
 - `github.com/zond/godip` — Diplomacy adjudication engine (DATC-compliant, all phases)
 - `gonum.org/v1/gonum` — graph library (used in legacy `game/` package)
 - `github.com/cheekybits/is` — test assertions
+
+---
+
+## Environment Constraints
+
+**No network access.** `go get` and the module proxy do not work. All dependencies must be present in `vendor/`. If a new dependency is needed:
+1. Add it to `go.mod` with any pseudo-version (e.g. `v0.0.0-20200101000000-000000000000`)
+2. Add it to `vendor/modules.txt` with `## explicit` annotation
+3. Create the package files under `vendor/<module-path>/`
+
+**godip is currently a stub.** The real godip library is not yet downloaded. `vendor/github.com/zond/godip/` contains a minimal stub that provides the correct interface signatures but zero adjudication logic. It is sufficient to compile and run all engine tests. When real godip becomes available:
+- Replace `vendor/github.com/zond/godip/` with the actual source
+- Update `vendor/modules.txt` with the correct version
+- Update `go.mod` and `go.sum` with the real checksum
+
+**godip.Adjudicator interface** (defined in the stub at `vendor/github.com/zond/godip/godip.go`) is the key seam. Any package interacting with game state should depend on this interface, not on `*classicalState` or other concrete types.
+
+---
+
+## Testing Conventions (additions)
+
+- Tests that need access to unexported helpers (e.g. `fillNMR`, `isEmptyPhase`, `newFromVariant`) use `package engine` (not `package engine_test`) so they share the package namespace. This is the standard Go pattern for white-box testing.
+- 100% coverage means **all branches**, not just all lines — use `go tool cover -func` to check per-function coverage when the summary isn't 100%.
 
 ---
 

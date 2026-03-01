@@ -63,18 +63,21 @@ Entry points: `game/resolver_main_phase.go`, `game/order_handler.go`, `game/orde
 
 ## Development Philosophy
 
-**TDD with 100% test coverage is non-negotiable.** Every change starts with a failing test. No production code is written without a corresponding test that drove it.
+**TDD with 100% test coverage is non-negotiable.** The workflow is strictly red → green → refactor:
 
-- Write the test first — watch it fail
-- Write the minimal code to make it pass
-- Refactor if needed, keeping tests green
+1. **Red** — uncomment the next DATC spec (or write a new unit test), run `go test`, confirm it fails for the right reason.
+2. **Green** — write the minimal code to make it pass; don't over-engineer.
+3. **Refactor** — once green, simplify and optimise. The adjudication algorithms in this domain are well-studied; feel free to read and borrow ideas from other open-source Diplomacy implementations (e.g. [jDip](https://jdip.sourceforge.net), [pydipcc](https://github.com/diplomacy/diplomacy), [godip](https://github.com/zond/godip)). Prefer clarity over cleverness, but don't leave a naïve O(n²) loop when a clean linear pass exists.
+
 - `go test -v -cover -race ./...` must pass at all times
+- Never commit with a failing test or with `focus: true` left set
 
 The integration test file (`game/resolver_integration_test.go`) is the canonical way to specify new resolution scenarios. DATC tests are listed in DATC order with unimplemented ones commented out. To work on the next DATC case:
 1. Check CLAUDE.md to see which phase is next
 2. Find the corresponding commented-out spec in `game/resolver_integration_test.go`
 3. Uncomment it, run tests, watch it fail
 4. Implement until green
+5. Refactor — simplify the algorithm, remove duplication, consult other implementations for inspiration
 
 The `focus` field on `spec` can be set to `true` to run only that scenario during development — remember to unset it before committing.
 

@@ -7,6 +7,7 @@ package bot
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/burrbd/dip/engine"
 	"github.com/burrbd/dip/events"
@@ -26,10 +27,12 @@ var classicalNations = map[string]bool{
 
 // Command is a parsed bot command from any platform adapter.
 type Command struct {
-	Name      string   // command name without leading slash (e.g. "newgame")
-	Args      []string // positional arguments
-	UserID    string   // platform user identifier
-	ChannelID string   // platform channel identifier
+	Name          string   // command name without leading slash (e.g. "newgame")
+	Args          []string // positional arguments
+	UserID        string   // platform user identifier
+	ChannelID     string   // platform channel identifier (DM channel for DM commands)
+	IsDM          bool     // true when the command was sent via direct message
+	GameChannelID string   // game channel ID; must be set for DM commands
 }
 
 // EngineFactory creates a new game engine for the given Diplomacy variant name.
@@ -64,6 +67,14 @@ func (d *Dispatcher) Dispatch(cmd Command) (string, error) {
 		return d.handleJoin(cmd)
 	case "start":
 		return d.handleStart(cmd)
+	case "order":
+		return d.handleOrder(cmd)
+	case "orders":
+		return d.handleOrders(cmd)
+	case "clear":
+		return d.handleClear(cmd)
+	case "submit":
+		return d.handleSubmit(cmd)
 	default:
 		return "", fmt.Errorf("bot: unknown command %q", cmd.Name)
 	}
@@ -207,4 +218,171 @@ func (d *Dispatcher) handleStart(cmd Command) (string, error) {
 	sess := session.New(d.ch, cmd.ChannelID, state.gmID, eng.Phase(), state.players, state.deadlineHours, eng, d.notifier)
 	d.sessions[cmd.ChannelID] = sess
 	return "Game started! Spring 1901 Movement phase begins. Players, submit your orders via DM.", nil
+}
+
+// isMovementPhase returns true if the given phase string is a Movement phase.
+func isMovementPhase(phase string) bool {
+	return strings.HasSuffix(phase, "Movement")
+}
+
+// handleOrder processes /order <order-text> (DM only, Movement phase).
+// It parses the order via the engine, validates nation ownership, and stages it.
+func (d *Dispatcher) handleOrder(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /order must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	if !isMovementPhase(sess.Phase) {
+		return "", fmt.Errorf("bot: /order is only valid during the Movement phase (current: %s)", sess.Phase)
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	if len(cmd.Args) == 0 {
+		return "", fmt.Errorf("bot: usage: /order <order-text>")
+	}
+	orderText := strings.Join(cmd.Args, " ")
+	if err := sess.Eng.SubmitOrder(nation, orderText); err != nil {
+		return "", fmt.Errorf("bot: invalid order: %w", err)
+	}
+	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+	return fmt.Sprintf("Order staged: %s", orderText), nil
+}
+
+// handleOrders processes /orders (DM only) — lists the caller's staged orders.
+func (d *Dispatcher) handleOrders(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /orders must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	orders := sess.StagedOrders[nation]
+	if len(orders) == 0 {
+		return "No orders staged.", nil
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Staged orders for %s:\n", nation)
+	for i, o := range orders {
+		fmt.Fprintf(&sb, "  %d. %s\n", i+1, o)
+	}
+	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// handleClear processes /clear [order] (DM only) — removes one or all staged orders.
+func (d *Dispatcher) handleClear(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /clear must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	if len(cmd.Args) == 0 {
+		sess.StagedOrders[nation] = nil
+		sess.Submitted[nation] = false
+		return "All orders cleared.", nil
+	}
+	target := strings.Join(cmd.Args, " ")
+	var filtered []string
+	found := false
+	for _, o := range sess.StagedOrders[nation] {
+		if o == target && !found {
+			found = true
+			continue
+		}
+		filtered = append(filtered, o)
+	}
+	if !found {
+		return "", fmt.Errorf("bot: order %q not found", target)
+	}
+	sess.StagedOrders[nation] = filtered
+	sess.Submitted[nation] = false
+	return fmt.Sprintf("Order removed: %s", target), nil
+}
+
+// handleSubmit processes /submit (DM only) — finalises staged orders and checks
+// whether all nations have submitted; if so fires AdvanceTurn immediately.
+func (d *Dispatcher) handleSubmit(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /submit must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	if !isMovementPhase(sess.Phase) {
+		return "", fmt.Errorf("bot: /submit is only valid during the Movement phase (current: %s)", sess.Phase)
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	if err := events.WriteDM(d.ch, cmd.UserID, events.TypeOrderSubmitted, events.OrderSubmitted{
+		UserID: cmd.UserID,
+		Nation: nation,
+		Orders: sess.StagedOrders[nation],
+		Phase:  sess.Phase,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
+	}
+	sess.Submitted[nation] = true
+
+	allDone, err := d.allNationsSubmitted(sess)
+	if err != nil {
+		return "", fmt.Errorf("bot: check submissions: %w", err)
+	}
+	if allDone {
+		if err := sess.AdvanceTurn(); err != nil {
+			return "", fmt.Errorf("bot: advance turn: %w", err)
+		}
+		return "Orders submitted. All nations ready — resolving now!", nil
+	}
+	return "Orders submitted.", nil
+}
+
+// allNationsSubmitted reads each player's DM thread to check whether every
+// nation has an OrderSubmitted event for the current phase.
+func (d *Dispatcher) allNationsSubmitted(sess *session.Session) (bool, error) {
+	for userID, nation := range sess.Players {
+		msgs, err := d.ch.DMHistory(userID)
+		if err != nil {
+			return false, fmt.Errorf("bot: dm history for %s: %w", nation, err)
+		}
+		found := false
+		for _, msg := range msgs {
+			var env events.Envelope
+			if err := json.Unmarshal([]byte(msg), &env); err != nil {
+				continue
+			}
+			if env.Type != events.TypeOrderSubmitted {
+				continue
+			}
+			var os events.OrderSubmitted
+			if err := json.Unmarshal(env.Payload, &os); err != nil {
+				continue
+			}
+			if os.Phase == sess.Phase && os.Nation == nation {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false, nil
+		}
+	}
+	return true, nil
 }

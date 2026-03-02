@@ -40,6 +40,9 @@ func (m *mockChannel) History(_ string) ([]string, error) {
 	return m.msgs, nil
 }
 
+func (m *mockChannel) SendDM(_, _ string) error            { return nil }
+func (m *mockChannel) DMHistory(_ string) ([]string, error) { return nil, nil }
+
 func (m *mockChannel) msgCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

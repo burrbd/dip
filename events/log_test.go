@@ -11,9 +11,12 @@ import (
 
 // mockChannel is an in-memory Channel for tests.
 type mockChannel struct {
-	messages  []string
-	postErr   error
+	messages   []string
+	dms        map[string][]string
+	postErr    error
 	historyErr error
+	dmPostErr  error
+	dmHistErr  error
 }
 
 func (m *mockChannel) Post(_, text string) error {
@@ -29,6 +32,24 @@ func (m *mockChannel) History(_ string) ([]string, error) {
 		return nil, m.historyErr
 	}
 	return m.messages, nil
+}
+
+func (m *mockChannel) SendDM(userID, text string) error {
+	if m.dmPostErr != nil {
+		return m.dmPostErr
+	}
+	if m.dms == nil {
+		m.dms = make(map[string][]string)
+	}
+	m.dms[userID] = append(m.dms[userID], text)
+	return nil
+}
+
+func (m *mockChannel) DMHistory(userID string) ([]string, error) {
+	if m.dmHistErr != nil {
+		return nil, m.dmHistErr
+	}
+	return m.dms[userID], nil
 }
 
 // TestWrite_PostsJSONEnvelope verifies that Write encodes the event as a JSON
@@ -155,4 +176,91 @@ func TestRoundTrip_AllEventTypes(t *testing.T) {
 	for i, p := range payloads {
 		is.Equal(envs[i].Type, p.typ)
 	}
+}
+
+// ---- WriteDM tests ----------------------------------------------------------
+
+// TestWriteDM_SendsJSONEnvelopeToDM verifies that WriteDM encodes the event as
+// a JSON Envelope and delivers it to the user's DM thread.
+func TestWriteDM_SendsJSONEnvelopeToDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+
+	payload := events.OrderSubmitted{UserID: "u1", Nation: "England", Orders: []string{"A Lon-Nth"}, Phase: "Spring 1901 Movement"}
+	err := events.WriteDM(ch, "u1", events.TypeOrderSubmitted, payload)
+	is.NoErr(err)
+	is.Equal(len(ch.dms["u1"]), 1)
+
+	var env events.Envelope
+	is.NoErr(json.Unmarshal([]byte(ch.dms["u1"][0]), &env))
+	is.Equal(env.Type, events.TypeOrderSubmitted)
+
+	var got events.OrderSubmitted
+	is.NoErr(json.Unmarshal(env.Payload, &got))
+	is.Equal(got.Nation, "England")
+	is.Equal(got.Orders[0], "A Lon-Nth")
+}
+
+// TestWriteDM_PropagatesMarshalError verifies that WriteDM returns an error
+// when the payload cannot be marshalled to JSON.
+func TestWriteDM_PropagatesMarshalError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	err := events.WriteDM(ch, "u1", events.TypeOrderSubmitted, make(chan int))
+	is.Err(err)
+}
+
+// TestWriteDM_PropagatesSendDMError verifies that WriteDM propagates a channel error.
+func TestWriteDM_PropagatesSendDMError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmPostErr: errors.New("dm down")}
+	err := events.WriteDM(ch, "u1", events.TypeOrderSubmitted, events.OrderSubmitted{})
+	is.Err(err)
+}
+
+// ---- ScanDM tests -----------------------------------------------------------
+
+// TestScanDM_ParsesEvents verifies that ScanDM returns all valid Envelope
+// events from the user's DM thread in chronological order.
+func TestScanDM_ParsesEvents(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	_ = events.WriteDM(ch, "u1", events.TypeOrderSubmitted, events.OrderSubmitted{Nation: "England"})
+	_ = events.WriteDM(ch, "u1", events.TypeOrderSubmitted, events.OrderSubmitted{Nation: "France"})
+
+	envs, err := events.ScanDM(ch, "u1")
+	is.NoErr(err)
+	is.Equal(len(envs), 2)
+	is.Equal(envs[0].Type, events.TypeOrderSubmitted)
+}
+
+// TestScanDM_SkipsNonEventMessages verifies that ScanDM silently ignores
+// non-Envelope messages in the DM thread.
+func TestScanDM_SkipsNonEventMessages(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dms: map[string][]string{
+		"u1": {"hello world", `{"not":"an event"}`},
+	}}
+	_ = events.WriteDM(ch, "u1", events.TypeOrderSubmitted, events.OrderSubmitted{Nation: "England"})
+
+	envs, err := events.ScanDM(ch, "u1")
+	is.NoErr(err)
+	is.Equal(len(envs), 1)
+}
+
+// TestScanDM_PropagatesDMHistoryError verifies that ScanDM returns the channel error.
+func TestScanDM_PropagatesDMHistoryError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmHistErr: errors.New("dm history unavailable")}
+	_, err := events.ScanDM(ch, "u1")
+	is.Err(err)
+}
+
+// TestScanDM_EmptyDMThread returns no events for an empty DM thread.
+func TestScanDM_EmptyDMThread(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	envs, err := events.ScanDM(ch, "u1")
+	is.NoErr(err)
+	is.Equal(len(envs), 0)
 }

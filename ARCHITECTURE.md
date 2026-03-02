@@ -25,9 +25,10 @@ bot/
   formatter.go       — format resolution results, board state, history as text
 
 engine/
-  adapter.go         — thin wrapper around godip state.State
-  phases.go          — phase advance, NMR DefaultOrder() fill, phase-skip logic
-  parser.go          — text order → godip Adjudicator via classical.Parser
+  adapter.go         — internal gameState/gamePhase/adjOrder interfaces + stateWrapper/phaseWrapper adapters;
+                       classicalLoader/classicalStartWith for snapshot restore; Engine public API
+  phases.go          — phase advance (Advance()), NMR DefaultOrder() fill (fillNMR), phase-skip logic
+  parser.go          — text order tokenizer (classicalOrderParser); parsedOrder stub adjOrder
   winner.go          — solo win / draw detection (polls SoloWinner after Fall Adjustment)
 
 session/
@@ -100,6 +101,44 @@ target is the Lambda function ARN (from environment). On `Cancel` it deletes the
 
 ---
 
+## engine/ — godip integration notes
+
+### Internal interface shim
+
+Real godip v0.6.5's `godip.Adjudicator` is a **per-province order**, not the game-state
+object. The `engine` package defines three private interfaces (`adjOrder`, `gamePhase`,
+`gameState`) so that tests can mock game state without depending on real godip types.
+`stateWrapper` and `phaseWrapper` bridge the gap between these interfaces and the real
+`*state.State` / `godip.Phase` types.
+
+### Serialization
+
+godip does not provide a JSON snapshot API. `engine` defines its own `stateSnapshot`
+struct (year, season, phase type, units, supply centres, dislodgeds) which is marshalled
+to/from JSON by `stateWrapper.Dump()` and `classicalLoader`. Supply centre counts at game
+start reflect only the 22 home SCs that godip tracks by default; neutral SCs are not
+recorded until captured.
+
+### Resolve() semantics
+
+Real godip adjudicates all orders atomically inside `(*state.State).Next()`. There is no
+per-province resolution API. `engine.Resolve()` therefore collects order summaries
+(province, order text, success=true) as a pre-advance snapshot, then `engine.Advance()`
+calls `Next()` to adjudicate. This means `Success` in `OrderResult` is always `true` in
+the current implementation — real failure detection requires post-`Next()` comparison of
+unit positions. This is a **known gap** to address in a future story.
+
+### Order parsing
+
+`classicalOrderParser` is a minimal tokenizer: it extracts the source province from the
+second whitespace-delimited token (e.g. `"A Vie-Bud"` → province `"Vie"`) and wraps the
+raw text in a `parsedOrder`. It does **not** produce a real `godip.Adjudicator` order.
+`stateWrapper.SetOrder` silently discards any order that does not implement
+`godip.Adjudicator`, so currently staged orders from text input are no-ops in real
+adjudication. Full integration with `godip/orders` parsing is a future story.
+
+---
+
 ## What godip provides vs. what the bot layer owns
 
 | Concern | godip | Bot layer |
@@ -128,7 +167,7 @@ target is the Lambda function ARN (from environment). On `Cancel` it deletes the
 | Decision | Choice | Rationale |
 |---|---|---|
 | **Press** | Out of scope — chat IS the press | Players negotiate in the channel; bot handles orders and adjudication only |
-| **Event log** | Snapshot per turn | Bot posts `godip.Dump()` JSON after each resolution; bot restart restores from last snapshot |
+| **Event log** | Snapshot per turn | Bot posts `engine.Dump()` JSON after each resolution; bot restart restores from last snapshot |
 | **GM role** | Game creator is GM | `/newgame` issuer gets admin privileges for that game |
 | **Multi-game** | One game per channel | No game-ID needed in commands; simpler UX |
 | **Order secrecy** | DM-based submission | `/order` commands go to the bot via DM; the player's DM thread is the per-player order log; the game channel only receives resolved state so opponents cannot read pending orders |

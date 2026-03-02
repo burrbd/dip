@@ -6,41 +6,40 @@ import (
 
 	"github.com/cheekybits/is"
 	"github.com/zond/godip"
-	"github.com/zond/godip/variants"
 )
 
-// ---- mock adjudicator -------------------------------------------------------
+// ---- mock game state --------------------------------------------------------
 
 type mockAdj struct {
-	phase         godip.Phase
-	orders        map[godip.Province]godip.Order
+	phase         gamePhase
+	orders        map[godip.Province]adjOrder
 	units         map[godip.Province]godip.Unit
 	dislodgeds    map[godip.Province]godip.Unit
 	supplyCenters map[godip.Province]godip.Nation
 	winner        godip.Nation
-	nextAdj       godip.Adjudicator
+	nextAdj       gameState
 	nextErr       error
 	resolveErr    map[godip.Province]error
-	setOrders     map[godip.Province]godip.Order
+	setOrders     map[godip.Province]adjOrder
 	dumpData      []byte
 	dumpErr       error
 }
 
 func newMockAdj() *mockAdj {
 	return &mockAdj{
-		orders:    make(map[godip.Province]godip.Order),
+		orders:    make(map[godip.Province]adjOrder),
 		units:     make(map[godip.Province]godip.Unit),
-		setOrders: make(map[godip.Province]godip.Order),
+		setOrders: make(map[godip.Province]adjOrder),
 	}
 }
 
-func (m *mockAdj) Phase() godip.Phase                        { return m.phase }
-func (m *mockAdj) Orders() map[godip.Province]godip.Order    { return m.orders }
-func (m *mockAdj) Units() map[godip.Province]godip.Unit      { return m.units }
-func (m *mockAdj) Dislodgeds() map[godip.Province]godip.Unit { return m.dislodgeds }
-func (m *mockAdj) SoloWinner() godip.Nation                  { return m.winner }
-func (m *mockAdj) Dump() ([]byte, error)                     { return m.dumpData, m.dumpErr }
-func (m *mockAdj) Next() (godip.Adjudicator, error)          { return m.nextAdj, m.nextErr }
+func (m *mockAdj) Phase() gamePhase                            { return m.phase }
+func (m *mockAdj) Orders() map[godip.Province]adjOrder         { return m.orders }
+func (m *mockAdj) Units() map[godip.Province]godip.Unit        { return m.units }
+func (m *mockAdj) Dislodgeds() map[godip.Province]godip.Unit   { return m.dislodgeds }
+func (m *mockAdj) SoloWinner() godip.Nation                    { return m.winner }
+func (m *mockAdj) Dump() ([]byte, error)                       { return m.dumpData, m.dumpErr }
+func (m *mockAdj) Next() (gameState, error)                    { return m.nextAdj, m.nextErr }
 func (m *mockAdj) SupplyCenters() map[godip.Province]godip.Nation {
 	if m.supplyCenters == nil {
 		return make(map[godip.Province]godip.Nation)
@@ -48,7 +47,7 @@ func (m *mockAdj) SupplyCenters() map[godip.Province]godip.Nation {
 	return m.supplyCenters
 }
 
-func (m *mockAdj) SetOrder(p godip.Province, o godip.Order) {
+func (m *mockAdj) SetOrder(p godip.Province, o adjOrder) {
 	m.setOrders[p] = o
 	m.orders[p] = o
 }
@@ -67,13 +66,13 @@ type mockPhase struct {
 	year   int
 	season godip.Season
 	// defaultOrderFn lets tests control what DefaultOrder returns.
-	defaultOrderFn func(godip.Province) godip.Order
+	defaultOrderFn func(godip.Province) adjOrder
 }
 
 func (p *mockPhase) Type() godip.PhaseType { return p.typ }
 func (p *mockPhase) Year() int             { return p.year }
 func (p *mockPhase) Season() godip.Season  { return p.season }
-func (p *mockPhase) DefaultOrder(prov godip.Province) godip.Order {
+func (p *mockPhase) DefaultOrder(prov godip.Province) adjOrder {
 	if p.defaultOrderFn != nil {
 		return p.defaultOrderFn(prov)
 	}
@@ -84,11 +83,11 @@ func (p *mockPhase) DefaultOrder(prov godip.Province) godip.Order {
 
 type mockParser struct {
 	prov  godip.Province
-	order godip.Order
+	order adjOrder
 	err   error
 }
 
-func (mp *mockParser) Parse(_ godip.Nation, _ string) (godip.Province, godip.Order, error) {
+func (mp *mockParser) Parse(_ godip.Nation, _ string) (godip.Province, adjOrder, error) {
 	return mp.prov, mp.order, mp.err
 }
 
@@ -96,8 +95,7 @@ func (mp *mockParser) Parse(_ godip.Nation, _ string) (godip.Province, godip.Ord
 
 type stubOrder struct{ t string }
 
-func (o *stubOrder) Type() godip.OrderType      { return godip.OrderType(o.t) }
-func (o *stubOrder) Flags() map[godip.Flag]bool { return nil }
+func (o *stubOrder) Type() godip.OrderType { return godip.OrderType(o.t) }
 
 // ---- tests ------------------------------------------------------------------
 
@@ -182,7 +180,7 @@ func TestAdvance_CallsNext(t *testing.T) {
 	err := g.Advance()
 
 	is.NoErr(err)
-	is.Equal(g.adj, godip.Adjudicator(nextAdj))
+	is.Equal(g.adj, gameState(nextAdj))
 }
 
 func TestAdvance_FillsNMR(t *testing.T) {
@@ -226,7 +224,7 @@ func TestAdvance_SkipsEmptyRetreat(t *testing.T) {
 
 	is.NoErr(err)
 	// Should have skipped the empty retreat and landed on Fall movement.
-	is.Equal(g.adj, godip.Adjudicator(fallAdj))
+	is.Equal(g.adj, gameState(fallAdj))
 }
 
 func TestAdvance_PropagatesNextError(t *testing.T) {
@@ -277,15 +275,12 @@ func TestDump_PropagatesError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestNewFromVariant_StartError(t *testing.T) {
+func TestNewFromVariantStart_StartError(t *testing.T) {
 	is := is.New(t)
-	v := variants.Variant{
-		Name: "failing",
-		Start: func() (godip.Adjudicator, error) {
-			return nil, errors.New("start failed")
-		},
-	}
-	_, err := newFromVariant(v, "failing", &mockParser{})
+	startErr := errors.New("start failed")
+	_, err := newFromVariantStart(func() (gameState, error) {
+		return nil, startErr
+	}, "failing", &mockParser{})
 	is.Err(err)
 }
 
@@ -321,7 +316,7 @@ func TestAdvance_NilPhase(t *testing.T) {
 	err := g.Advance()
 
 	is.NoErr(err)
-	is.Equal(g.adj, godip.Adjudicator(nextAdj))
+	is.Equal(g.adj, gameState(nextAdj))
 }
 
 func TestAdvance_SkipsEmptyAdjustment(t *testing.T) {
@@ -345,7 +340,7 @@ func TestAdvance_SkipsEmptyAdjustment(t *testing.T) {
 	err := g.Advance()
 
 	is.NoErr(err)
-	is.Equal(g.adj, godip.Adjudicator(springAdj))
+	is.Equal(g.adj, gameState(springAdj))
 }
 
 func TestLoad_CreatesEngine(t *testing.T) {
@@ -357,7 +352,7 @@ func TestLoad_CreatesEngine(t *testing.T) {
 
 func TestLoad_PropagatesLoaderError(t *testing.T) {
 	is := is.New(t)
-	failLoader := func(_ []byte) (godip.Adjudicator, error) {
+	failLoader := func(_ []byte) (gameState, error) {
 		return nil, errors.New("deserialise failed")
 	}
 	_, err := loadFromSnapshot([]byte(`{}`), failLoader)
@@ -394,7 +389,7 @@ func TestFillNMR_NilDefaultOrder(t *testing.T) {
 	adj.units["Vie"] = godip.Unit{Type: godip.Army, Nation: "Austria"}
 	adj.phase = &mockPhase{
 		typ: godip.Movement,
-		defaultOrderFn: func(_ godip.Province) godip.Order {
+		defaultOrderFn: func(_ godip.Province) adjOrder {
 			return nil // simulate no default order available
 		},
 	}
@@ -442,7 +437,7 @@ func TestFillNMR_NilDefaultOrderForDislodged(t *testing.T) {
 	adj := newMockAdj()
 	adj.phase = &mockPhase{
 		typ: godip.Retreat,
-		defaultOrderFn: func(_ godip.Province) godip.Order {
+		defaultOrderFn: func(_ godip.Province) adjOrder {
 			return nil
 		},
 	}

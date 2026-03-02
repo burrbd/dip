@@ -99,16 +99,60 @@ Key dependencies:
 ## Environment Constraints
 
 **No network access.** `go get` and the module proxy do not work. All dependencies must be present in `vendor/`. If a new dependency is needed:
-1. Add it to `go.mod` with any pseudo-version (e.g. `v0.0.0-20200101000000-000000000000`)
-2. Add it to `vendor/modules.txt` with `## explicit` annotation
-3. Create the package files under `vendor/<module-path>/`
+1. Add it to `go.mod` with the correct version
+2. Run `go mod tidy` and `go mod vendor` (requires network; do once then commit the result)
+3. Or manually create the package files under `vendor/<module-path>/` and update `vendor/modules.txt`
 
-**godip is currently a stub.** The real godip library is not yet downloaded. `vendor/github.com/zond/godip/` contains a minimal stub that provides the correct interface signatures but zero adjudication logic. It is sufficient to compile and run all engine tests. When real godip becomes available:
-- Replace `vendor/github.com/zond/godip/` with the actual source
-- Update `vendor/modules.txt` with the correct version
-- Update `go.mod` and `go.sum` with the real checksum
+**godip v0.6.5 is now vendored.** `vendor/github.com/zond/godip/` contains the real library source. The previous minimal stub has been replaced.
 
-**godip.Adjudicator interface** (defined in the stub at `vendor/github.com/zond/godip/godip.go`) is the key seam. Any package interacting with game state should depend on this interface, not on `*classicalState` or other concrete types.
+### godip API — what changed from the stub
+
+The original stub modelled `godip.Adjudicator` as the game-state object (with `Phase()`, `Units()`, `Next() (Adjudicator, error)`, etc.). In **real godip v0.6.5** the types are:
+
+| Concept | Stub (old) | Real godip v0.6.5 |
+|---|---|---|
+| Game state | `godip.Adjudicator` | `*state.State` |
+| Per-province order | `godip.Order` | `godip.Adjudicator` |
+| Phase advance | `Next() (Adjudicator, error)` | `(*state.State).Next() error` (in-place) |
+| Serialization | `Load([]byte) (Adjudicator, error)` | No built-in JSON; 6 raw maps via `Units()`, etc. |
+| Order parser | `classical.Parser.Parse([]string)` | `orders.ParseOrder()` tokens |
+
+### engine/ internal interface shim
+
+Because the real `godip.Adjudicator` is a per-province order (not the game state), the `engine` package defines its own internal interfaces to decouple tests from godip's concrete types:
+
+```go
+// adjOrder — minimal interface over any staged order (real or test stub)
+type adjOrder interface { Type() godip.OrderType }
+
+// gamePhase — engine view of a game phase
+type gamePhase interface {
+    Type() godip.PhaseType; Year() int; Season() godip.Season
+    DefaultOrder(godip.Province) adjOrder
+}
+
+// gameState — engine view of the full game state
+type gameState interface {
+    Phase() gamePhase
+    Orders() map[godip.Province]adjOrder
+    Units() map[godip.Province]godip.Unit
+    Dislodgeds() map[godip.Province]godip.Unit
+    SupplyCenters() map[godip.Province]godip.Nation
+    SetOrder(godip.Province, adjOrder)
+    Resolve(godip.Province) error
+    Next() (gameState, error)
+    SoloWinner() godip.Nation
+    Dump() ([]byte, error)
+}
+```
+
+`stateWrapper` (wraps `*state.State` + `common.Variant`) and `phaseWrapper` (wraps `godip.Phase`) are the production implementations. Test files use `mockAdj`/`mockPhase` that satisfy the same interfaces without touching real godip.
+
+### Known stubs still in engine/
+
+- **`classicalOrderParser`** — tokenizes order text (`"A Vie-Bud"` → province `"Vie"`) but does not convert the text into a real `godip.Adjudicator` order. Real order submission passes a `parsedOrder` (which carries the raw text as its `Type()`). Full integration with `godip/orders` parsing is deferred.
+- **`stateWrapper.Resolve()`** — returns `nil` unconditionally. Real adjudication happens inside `(*state.State).Next()`. The `engine.Resolve()` method collects order summaries but does not call per-province resolution before advancing.
+- **`buildStateFromSnapshot` error paths** — `SetUnits` and `SetDislodgeds` rarely return errors in practice; these branches exist for safety but are not reachable in normal test scenarios (engine coverage sits at ~98%).
 
 ---
 
@@ -154,21 +198,25 @@ events.Rebuild(ch, channelID, func(snap []byte) (events.EngineState, error) {
 // eng is now the restored engine.Engine
 ```
 
-### Covering error paths in stub-backed functions
+### Covering error paths in functions that rarely fail
 
-Stub functions (e.g. `classical.Load`) never return errors by design. Any wrapper
-that only delegates to the stub will have an unreachable error branch. The established
-pattern is to extract a private helper that accepts the dependency as a parameter:
+Some functions (e.g. `classical.Start`, `(*state.State).Next`) never return errors in
+practice. Any wrapper that only delegates to them will have an unreachable error branch.
+The established pattern is to extract a private helper that accepts the dependency as a
+parameter so tests can inject a failing version:
 
 ```go
-// Public entry point — always succeeds with the real stub.
-func Load(snap []byte) (Engine, error) { return loadFromSnapshot(snap, classical.Load) }
+// Public entry point — delegates to the real function.
+func classicalLoader(snap []byte) (gameState, error) {
+    return classicalLoaderWith(snap, classical.Start)
+}
 
-// Testable helper — tests inject a failing loader to cover the error branch.
-func loadFromSnapshot(snap []byte, loader func([]byte) (godip.Adjudicator, error)) (Engine, error) { ... }
+// Testable helper — tests inject a failing startFn to cover the error branch.
+func classicalLoaderWith(snap []byte, startFn func() (*state.State, error)) (gameState, error) { ... }
 ```
 
-See `loadFromSnapshot` and `newFromVariant` in `engine/adapter.go` for examples.
+See `classicalLoaderWith`, `classicalStartWith`, and `nextWith` in `engine/adapter.go` for
+examples of this pattern applied throughout the engine package.
 
 ---
 

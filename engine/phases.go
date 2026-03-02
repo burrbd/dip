@@ -30,7 +30,7 @@ func (g *game) Advance() error {
 // fillNMR stages a default order for every unit that has not yet received an
 // order this phase. During the Retreat phase it also fills default (disband)
 // orders for dislodged units that have no retreat order.
-func fillNMR(adj godip.Adjudicator) {
+func fillNMR(adj gameState) {
 	phase := adj.Phase()
 	if phase == nil {
 		return
@@ -57,7 +57,7 @@ func fillNMR(adj godip.Adjudicator) {
 // isEmptyPhase reports whether the current phase requires no player input:
 //   - Retreat phase with no dislodged units
 //   - Adjustment phase with no units (nothing to build or disband)
-func isEmptyPhase(adj godip.Adjudicator) bool {
+func isEmptyPhase(adj gameState) bool {
 	phase := adj.Phase()
 	if phase == nil {
 		return false

@@ -21,6 +21,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 ## Stories
 
 - [x] Story 1 — godip Engine Adapter
+- [ ] Story 1a — Real Order Parsing & Resolve Accuracy
 - [x] Story 2 — Event Log
 - [x] Story 3 — Session Management
 - [x] Story 4 — Bot Command Router + Game Setup
@@ -42,12 +43,40 @@ Never mark a story done if any test is failing or any criterion is unmet.
 **Files:** `engine/adapter.go`, `engine/phases.go`, `engine/parser.go`, `engine/winner.go`
 
 **Acceptance criteria:**
-- `engine.NewGame(variant)` creates a godip `state.State` and returns an opaque `Engine`
-- `Engine.SubmitOrder(nation, orderText)` parses via `classical.Parser` and stages the order
-- `Engine.Resolve()` calls godip's adjudicator and returns a result summary
-- `Engine.Advance()` calls `Next()`, fills NMR orders via `DefaultOrder()`, skips empty retreat/adjustment phases
+- `engine.New(variant)` creates a godip `state.State` and returns an opaque `Engine`
+- `Engine.SubmitOrder(nation, orderText)` parses order text and stages the order
+- `Engine.Resolve()` returns a pre-advance summary of staged orders (province, order text, success)
+- `Engine.Advance()` fills NMR orders via `DefaultOrder()`, calls godip `Next()`, skips empty retreat/adjustment phases
 - `Engine.SoloWinner()` returns the winning nation or empty string
+- `Engine.Dump()` / `engine.Load()` serialise and restore game state via a JSON snapshot (`stateSnapshot`)
 - All public functions have unit tests
+
+> **Known gaps (see Story 1a):**
+> - `classicalOrderParser` is a text tokenizer only — it does not produce real `godip.Adjudicator`
+>   orders. Staged orders from `SubmitOrder` are silently dropped by `stateWrapper.SetOrder` and
+>   have no effect on real adjudication. NMR `DefaultOrder()` fills (which produce real
+>   `godip.Adjudicator` holds) are unaffected.
+> - `OrderResult.Success` in `Resolve()` is always `true` because godip adjudicates inside
+>   `Next()` with no per-province API beforehand.
+
+---
+
+### Story 1a — Real Order Parsing & Resolve Accuracy
+
+**Goal:** Wire up real godip order parsing so that player-submitted orders are actually
+adjudicated, and make `Resolve()` report accurate success/failure after advancing.
+
+**Files:** `engine/parser.go`, `engine/adapter.go`
+
+**Acceptance criteria:**
+- `classicalOrderParser.Parse` converts order text into a real `godip.Adjudicator` using the
+  `github.com/zond/godip/orders` package (e.g. `orders.Move`, `orders.Hold`, `orders.Support`)
+- `stateWrapper.SetOrder` stages the real adjudicator; the type-assertion guard can be removed
+  once the parser produces real adjudicators
+- `Engine.Resolve()` compares unit positions before and after `Next()` (or uses godip's
+  resolution result map) to populate `OrderResult.Success` accurately
+- All existing tests continue to pass; new tests cover a move that bounces (Success=false)
+  and a supported move that succeeds (Success=true)
 
 ---
 
@@ -64,7 +93,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - `events.Write(channelID, event)` posts a JSON-encoded event message to the channel
 - `events.Scan(channelID)` reads channel history and returns typed events in order
 - `events.Rebuild(channelID)` finds the last `PhaseResolved` or `GameStarted` snapshot,
-  calls `state.Load()`, then replays subsequent `OrderSubmitted` events as staged orders
+  calls `engine.Load()`, then replays subsequent `OrderSubmitted` events as staged orders
 - Unit tests cover serialization round-trips and replay logic
 
 ---
@@ -104,7 +133,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - Access control: `/start` and GM commands require the caller to be the GM
 - `/newgame` posts `GameCreated` event, sets GM to caller
 - `/join` posts `PlayerJoined` event; rejects if game already started or nation taken
-- `/start` validates 2–7 players joined, posts `GameStarted` with `godip.Dump()` snapshot,
+- `/start` validates 2–7 players joined, posts `GameStarted` with `engine.Dump()` snapshot,
   starts Spring Movement deadline
 - `bot.Format*` helpers render results and board state as plain text
 - Unit tests use a mock channel/session

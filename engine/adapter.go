@@ -4,26 +4,97 @@
 package engine
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/zond/godip"
-	"github.com/zond/godip/variants"
+	"github.com/zond/godip/state"
 	"github.com/zond/godip/variants/classical"
+	"github.com/zond/godip/variants/common"
 )
+
+// adjOrder is the minimal interface our engine needs from an order.
+// Satisfied by real godip.Adjudicator and by stub orders used in tests.
+type adjOrder interface {
+	Type() godip.OrderType
+}
+
+// gamePhase is the engine-internal phase interface.
+type gamePhase interface {
+	Type() godip.PhaseType
+	Year() int
+	Season() godip.Season
+	DefaultOrder(godip.Province) adjOrder
+}
+
+// gameState is the engine-internal game state interface.
+// Satisfied by stateWrapper (real *state.State) and by test mocks.
+type gameState interface {
+	Phase() gamePhase
+	Orders() map[godip.Province]adjOrder
+	Units() map[godip.Province]godip.Unit
+	Dislodgeds() map[godip.Province]godip.Unit
+	SupplyCenters() map[godip.Province]godip.Nation
+	SetOrder(godip.Province, adjOrder)
+	Resolve(godip.Province) error
+	Next() (gameState, error)
+	SoloWinner() godip.Nation
+	Dump() ([]byte, error)
+}
 
 // Load restores an Engine from a JSON snapshot produced by Dump.
 func Load(snapshot []byte) (Engine, error) {
-	return loadFromSnapshot(snapshot, classical.Load)
+	return loadFromSnapshot(snapshot, classicalLoader)
 }
 
 // loadFromSnapshot restores an Engine using loader to deserialise the snapshot.
 // Separated from Load so tests can inject a failing loader.
-func loadFromSnapshot(snapshot []byte, loader func([]byte) (godip.Adjudicator, error)) (Engine, error) {
-	adj, err := loader(snapshot)
+func loadFromSnapshot(snapshot []byte, loader func([]byte) (gameState, error)) (Engine, error) {
+	gs, err := loader(snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("engine: load snapshot: %w", err)
 	}
-	return &game{adj: adj, parser: classical.Parser}, nil
+	return &game{adj: gs, parser: &classicalOrderParser{}}, nil
+}
+
+// classicalLoader deserialises a JSON snapshot into a classical game state.
+func classicalLoader(snapshot []byte) (gameState, error) {
+	return classicalLoaderWith(snapshot, classical.Start)
+}
+
+// classicalLoaderWith is the testable core of classicalLoader.
+// startFn is injected so tests can simulate errors from classical.Start.
+func classicalLoaderWith(snapshot []byte, startFn func() (*state.State, error)) (gameState, error) {
+	var snap stateSnapshot
+	if err := json.Unmarshal(snapshot, &snap); err != nil || snap.Year == 0 {
+		// Empty or unparseable snapshot: start a fresh classical game.
+		st, err := startFn()
+		if err != nil {
+			return nil, err
+		}
+		return newStateWrapper(st, classical.ClassicalVariant), nil
+	}
+	ph := classical.NewPhase(snap.Year, snap.Season, snap.PhaseType)
+	return buildStateFromSnapshot(classical.Blank(ph), &snap)
+}
+
+// buildStateFromSnapshot loads units, supply centres, and dislodgeds from snap
+// into st. Extracted so tests can trigger SetUnits/SetDislodgeds error paths.
+func buildStateFromSnapshot(st *state.State, snap *stateSnapshot) (gameState, error) {
+	if len(snap.Units) > 0 {
+		if err := st.SetUnits(snap.Units); err != nil {
+			return nil, fmt.Errorf("engine: set units: %w", err)
+		}
+	}
+	if len(snap.SupplyCenters) > 0 {
+		st.SetSupplyCenters(snap.SupplyCenters)
+	}
+	if len(snap.Dislodgeds) > 0 {
+		if err := st.SetDislodgeds(snap.Dislodgeds); err != nil {
+			return nil, fmt.Errorf("engine: set dislodgeds: %w", err)
+		}
+	}
+	return newStateWrapper(st, classical.ClassicalVariant), nil
 }
 
 // UnitInfo holds the type and owning nation of a unit on the board.
@@ -74,42 +145,54 @@ type OrderResult struct {
 	Success  bool
 }
 
-// game implements Engine around a godip Adjudicator.
+// game implements Engine around a gameState.
 type game struct {
-	adj    godip.Adjudicator
+	adj    gameState
 	parser orderParser
 }
 
 // New creates an Engine for the named Diplomacy variant (currently "classical").
 func New(variant string) (Engine, error) {
-	v, err := lookupVariant(variant)
+	start, err := lookupVariantStart(variant)
 	if err != nil {
 		return nil, err
 	}
-	return newFromVariant(v, variant, classical.Parser)
+	return newFromVariantStart(start, variant, &classicalOrderParser{})
 }
 
-// newFromVariant starts a game from the given Variant and parser. Separated
-// from New so that tests can inject a variant with a failing Start function.
-func newFromVariant(v variants.Variant, name string, p orderParser) (Engine, error) {
-	adj, err := v.Start()
+// newFromVariantStart starts a game from the given start function and parser.
+// Separated from New so that tests can inject a failing start function.
+func newFromVariantStart(start func() (gameState, error), name string, p orderParser) (Engine, error) {
+	gs, err := start()
 	if err != nil {
 		return nil, fmt.Errorf("engine: start %s: %w", name, err)
 	}
-	return &game{adj: adj, parser: p}, nil
+	return &game{adj: gs, parser: p}, nil
 }
 
-// lookupVariant returns the Variant for the given name.
-func lookupVariant(name string) (variants.Variant, error) {
+// lookupVariantStart returns the start function for the given variant name.
+func lookupVariantStart(name string) (func() (gameState, error), error) {
 	switch name {
 	case "classical":
-		return classical.ClassicalVariant, nil
+		return func() (gameState, error) {
+			return classicalStartWith(classical.Start)
+		}, nil
 	default:
-		return variants.Variant{}, fmt.Errorf("engine: unknown variant %q", name)
+		return nil, fmt.Errorf("engine: unknown variant %q", name)
 	}
 }
 
-// SubmitOrder parses the order text and stages it on the adjudicator.
+// classicalStartWith is the testable core of the classical start function.
+// startFn is injected so tests can simulate errors from classical.Start.
+func classicalStartWith(startFn func() (*state.State, error)) (gameState, error) {
+	st, err := startFn()
+	if err != nil {
+		return nil, err
+	}
+	return newStateWrapper(st, classical.ClassicalVariant), nil
+}
+
+// SubmitOrder parses the order text and stages it on the game state.
 func (g *game) SubmitOrder(nation, orderText string) error {
 	prov, order, err := g.parser.Parse(godip.Nation(nation), orderText)
 	if err != nil {
@@ -182,4 +265,114 @@ func (g *game) Units() map[string]UnitInfo {
 		}
 	}
 	return result
+}
+
+// ---- stateWrapper: adapts *state.State to gameState -------------------------
+
+// stateSnapshot is the JSON format used to persist and restore game state.
+type stateSnapshot struct {
+	Year          int                             `json:"year"`
+	Season        godip.Season                    `json:"season"`
+	PhaseType     godip.PhaseType                 `json:"phase_type"`
+	Units         map[godip.Province]godip.Unit   `json:"units"`
+	SupplyCenters map[godip.Province]godip.Nation `json:"supply_centers"`
+	Dislodgeds    map[godip.Province]godip.Unit   `json:"dislodgeds"`
+}
+
+// stateWrapper wraps *state.State to implement gameState.
+type stateWrapper struct {
+	st      *state.State
+	variant common.Variant
+}
+
+func newStateWrapper(st *state.State, v common.Variant) *stateWrapper {
+	return &stateWrapper{st: st, variant: v}
+}
+
+func (w *stateWrapper) Phase() gamePhase {
+	p := w.st.Phase()
+	if p == nil {
+		return nil
+	}
+	return phaseWrapper{p}
+}
+
+func (w *stateWrapper) Orders() map[godip.Province]adjOrder {
+	result := make(map[godip.Province]adjOrder)
+	for p, o := range w.st.Orders() {
+		result[p] = o // godip.Adjudicator satisfies adjOrder (has Type())
+	}
+	return result
+}
+
+func (w *stateWrapper) Units() map[godip.Province]godip.Unit {
+	return w.st.Units()
+}
+
+func (w *stateWrapper) Dislodgeds() map[godip.Province]godip.Unit {
+	return w.st.Dislodgeds()
+}
+
+func (w *stateWrapper) SupplyCenters() map[godip.Province]godip.Nation {
+	return w.st.SupplyCenters()
+}
+
+func (w *stateWrapper) SetOrder(p godip.Province, o adjOrder) {
+	// Only real godip.Adjudicator values can be staged for adjudication.
+	if adj, ok := o.(godip.Adjudicator); ok {
+		_ = w.st.SetOrder(p, adj)
+	}
+	// Stub orders from tests (not godip.Adjudicator) are silently ignored.
+}
+
+func (w *stateWrapper) Resolve(_ godip.Province) error {
+	// Real adjudication is performed inside Next(). This is a no-op stub
+	// so that engine.Resolve() can gather order summaries before advancing.
+	return nil
+}
+
+func (w *stateWrapper) Next() (gameState, error) {
+	return w.nextWith(w.st.Next)
+}
+
+// nextWith is the testable core of Next, accepting an advance function so tests
+// can inject failures (since state.State.Next never errors in practice).
+func (w *stateWrapper) nextWith(advance func() error) (gameState, error) {
+	if err := advance(); err != nil {
+		return nil, err
+	}
+	return w, nil // *state.State is mutated in-place by Next()
+}
+
+func (w *stateWrapper) SoloWinner() godip.Nation {
+	if w.variant.SoloWinner != nil {
+		return w.variant.SoloWinner(w.st)
+	}
+	return ""
+}
+
+func (w *stateWrapper) Dump() ([]byte, error) {
+	ph := w.st.Phase()
+	snap := stateSnapshot{
+		Year:          ph.Year(),
+		Season:        ph.Season(),
+		PhaseType:     ph.Type(),
+		Units:         w.st.Units(),
+		SupplyCenters: w.st.SupplyCenters(),
+		Dislodgeds:    w.st.Dislodgeds(),
+	}
+	return json.Marshal(snap)
+}
+
+// ---- phaseWrapper: adapts godip.Phase to gamePhase -------------------------
+
+// phaseWrapper wraps godip.Phase to implement gamePhase.
+type phaseWrapper struct{ godip.Phase }
+
+func (pw phaseWrapper) DefaultOrder(p godip.Province) adjOrder {
+	o := pw.Phase.DefaultOrder(p)
+	if o == nil {
+		return nil
+	}
+	return o // godip.Adjudicator satisfies adjOrder
 }

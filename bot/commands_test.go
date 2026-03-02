@@ -7,15 +7,19 @@ import (
 
 	"github.com/burrbd/dip/engine"
 	"github.com/burrbd/dip/events"
+	"github.com/burrbd/dip/session"
 	"github.com/cheekybits/is"
 )
 
 // ---- mock channel -----------------------------------------------------------
 
 type mockChannel struct {
-	msgs    []string
-	postErr error
-	histErr error
+	msgs      []string
+	dms       map[string][]string
+	postErr   error
+	histErr   error
+	dmPostErr error
+	dmHistErr error
 }
 
 func (m *mockChannel) Post(_, text string) error {
@@ -31,6 +35,24 @@ func (m *mockChannel) History(_ string) ([]string, error) {
 		return nil, m.histErr
 	}
 	return m.msgs, nil
+}
+
+func (m *mockChannel) SendDM(userID, text string) error {
+	if m.dmPostErr != nil {
+		return m.dmPostErr
+	}
+	if m.dms == nil {
+		m.dms = make(map[string][]string)
+	}
+	m.dms[userID] = append(m.dms[userID], text)
+	return nil
+}
+
+func (m *mockChannel) DMHistory(userID string) ([]string, error) {
+	if m.dmHistErr != nil {
+		return nil, m.dmHistErr
+	}
+	return m.dms[userID], nil
 }
 
 func (m *mockChannel) lastEventType() events.EventType {
@@ -53,18 +75,25 @@ func (n *mockNotifier) Notify(_, _ string) error { return nil }
 // ---- mock engine ------------------------------------------------------------
 
 type mockEngine struct {
-	phase    string
-	dump     []byte
-	dumpErr  error
-	startErr error
+	phase      string
+	dump       []byte
+	dumpErr    error
+	orderErr   error
+	resolveErr error
+	advanceErr error
+	soloWinner string
 }
 
-func (e *mockEngine) SubmitOrder(_, _ string) error             { return nil }
-func (e *mockEngine) Resolve() (engine.ResolutionResult, error) { return engine.ResolutionResult{}, nil }
-func (e *mockEngine) Advance() error                            { return nil }
-func (e *mockEngine) SoloWinner() string                        { return "" }
-func (e *mockEngine) Dump() ([]byte, error)                     { return e.dump, e.dumpErr }
-func (e *mockEngine) Phase() string                             { return e.phase }
+func (e *mockEngine) SubmitOrder(_, _ string) error {
+	return e.orderErr
+}
+func (e *mockEngine) Resolve() (engine.ResolutionResult, error) {
+	return engine.ResolutionResult{Phase: e.phase}, e.resolveErr
+}
+func (e *mockEngine) Advance() error    { return e.advanceErr }
+func (e *mockEngine) SoloWinner() string { return e.soloWinner }
+func (e *mockEngine) Dump() ([]byte, error) { return e.dump, e.dumpErr }
+func (e *mockEngine) Phase() string         { return e.phase }
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -484,4 +513,440 @@ func TestDispatchJoin_RejectsWhenPostFails(t *testing.T) {
 
 	_, err := d.Dispatch(Command{Name: "join", Args: []string{"England"}, ChannelID: "chan1", UserID: "u1"})
 	is.Err(err)
+}
+
+// ---- DM command helpers -----------------------------------------------------
+
+// makeDMSession creates a started session with two players (u1→England, u2→France)
+// keyed by gameChID in the dispatcher's sessions map. DeadlineHours is 0 to
+// prevent background timers in tests.
+func makeDMSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
+	players := map[string]string{"u1": "England", "u2": "France"}
+	eng := goodEngine()
+	sess := session.New(ch, gameChID, "gm1", "Spring 1901 Movement", players, 0, eng, &mockNotifier{})
+	d.sessions[gameChID] = sess
+	return sess
+}
+
+// makeSinglePlayerSession creates a started session with one player (u1→England).
+func makeSinglePlayerSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
+	players := map[string]string{"u1": "England"}
+	sess := session.New(ch, gameChID, "gm1", "Spring 1901 Movement", players, 0, goodEngine(), &mockNotifier{})
+	d.sessions[gameChID] = sess
+	return sess
+}
+
+// dmCmd builds a DM Command targeting the given game channel.
+func dmCmd(name, gameChID, userID string, args ...string) Command {
+	return Command{
+		Name:          name,
+		Args:          args,
+		UserID:        userID,
+		ChannelID:     "dm-" + userID,
+		IsDM:          true,
+		GameChannelID: gameChID,
+	}
+}
+
+// ---- /order -----------------------------------------------------------------
+
+func TestDispatchOrder_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "order", Args: []string{"A Vie-Bud"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchOrder_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("order", "chan1", "u1", "A Vie-Bud"))
+	is.Err(err)
+}
+
+func TestDispatchOrder_RejectsNonMovementPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.Phase = "Spring 1901 Retreat"
+
+	_, err := d.Dispatch(dmCmd("order", "chan1", "u1", "A Vie-Bud"))
+	is.Err(err)
+}
+
+func TestDispatchOrder_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("order", "chan1", "outsider"))
+	is.Err(err)
+}
+
+func TestDispatchOrder_RejectsMissingArg(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("order", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchOrder_RejectsInvalidOrder(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.Eng = &mockEngine{
+		phase:    "Spring 1901 Movement",
+		dump:     []byte(`{}`),
+		orderErr: errors.New("bad order"),
+	}
+
+	_, err := d.Dispatch(dmCmd("order", "chan1", "u1", "A Xyz-Foo"))
+	is.Err(err)
+}
+
+func TestDispatchOrder_StagesOrder(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("order", "chan1", "u1", "A", "Vie-Bud"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	is.Equal(len(sess.StagedOrders["England"]), 1)
+	is.Equal(sess.StagedOrders["England"][0], "A Vie-Bud")
+}
+
+func TestDispatchOrder_MultiWordOrderJoined(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("order", "chan1", "u1", "A", "Vie", "S", "F", "Tri-Alb"))
+	is.NoErr(err)
+	is.Equal(sess.StagedOrders["England"][0], "A Vie S F Tri-Alb")
+}
+
+// ---- /orders ----------------------------------------------------------------
+
+func TestDispatchOrders_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "orders", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchOrders_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("orders", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchOrders_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("orders", "chan1", "outsider"))
+	is.Err(err)
+}
+
+func TestDispatchOrders_ReturnsNoOrders(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("orders", "chan1", "u1"))
+	is.NoErr(err)
+	is.Equal(resp, "No orders staged.")
+}
+
+func TestDispatchOrders_ListsStagedOrders(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.StagedOrders["England"] = []string{"A Vie-Bud", "F Tri-Alb"}
+
+	resp, err := d.Dispatch(dmCmd("orders", "chan1", "u1"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	// Response must mention both orders.
+	if !contains(resp, "A Vie-Bud") || !contains(resp, "F Tri-Alb") {
+		t.Errorf("expected both orders in response, got: %q", resp)
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub || len(s) > 0 && containsStr(s, sub))
+}
+
+func containsStr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- /clear -----------------------------------------------------------------
+
+func TestDispatchClear_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "clear", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchClear_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("clear", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchClear_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("clear", "chan1", "outsider"))
+	is.Err(err)
+}
+
+func TestDispatchClear_ClearsAllOrders(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.StagedOrders["England"] = []string{"A Vie-Bud", "F Tri-Alb"}
+	sess.Submitted["England"] = true
+
+	_, err := d.Dispatch(dmCmd("clear", "chan1", "u1"))
+	is.NoErr(err)
+	is.Equal(len(sess.StagedOrders["England"]), 0)
+	is.Equal(sess.Submitted["England"], false)
+}
+
+func TestDispatchClear_ClearsSpecificOrder(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.StagedOrders["England"] = []string{"A Vie-Bud", "F Tri-Alb"}
+
+	_, err := d.Dispatch(dmCmd("clear", "chan1", "u1", "A Vie-Bud"))
+	is.NoErr(err)
+	is.Equal(len(sess.StagedOrders["England"]), 1)
+	is.Equal(sess.StagedOrders["England"][0], "F Tri-Alb")
+}
+
+func TestDispatchClear_RejectsOrderNotFound(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.StagedOrders["England"] = []string{"A Vie-Bud"}
+
+	_, err := d.Dispatch(dmCmd("clear", "chan1", "u1", "A Lon-Nth"))
+	is.Err(err)
+}
+
+// ---- /submit ----------------------------------------------------------------
+
+func TestDispatchSubmit_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "submit", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchSubmit_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchSubmit_RejectsNonMovementPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.Phase = "Spring 1901 Retreat"
+
+	_, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchSubmit_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("submit", "chan1", "outsider"))
+	is.Err(err)
+}
+
+func TestDispatchSubmit_RejectsWriteDMError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmPostErr: errors.New("dm unavailable")}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchSubmit_WritesOrderSubmittedToDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	sess.StagedOrders["England"] = []string{"A Vie-Bud"}
+
+	_, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.NoErr(err)
+
+	// DM thread for u1 must contain an OrderSubmitted event.
+	envs, scanErr := events.ScanDM(ch, "u1")
+	is.NoErr(scanErr)
+	is.Equal(len(envs), 1)
+	is.Equal(envs[0].Type, events.TypeOrderSubmitted)
+
+	var os events.OrderSubmitted
+	is.NoErr(json.Unmarshal(envs[0].Payload, &os))
+	is.Equal(os.Nation, "England")
+	is.Equal(os.Phase, "Spring 1901 Movement")
+	is.Equal(len(os.Orders), 1)
+	is.Equal(os.Orders[0], "A Vie-Bud")
+}
+
+func TestDispatchSubmit_DoesNotFireAdvanceTurnIfNotAllSubmitted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1") // two players: u1 and u2
+
+	// Only u1 submits; u2 has not.
+	resp, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.NoErr(err)
+	is.Equal(resp, "Orders submitted.")
+
+	// No PhaseResolved event should have been posted to the game channel.
+	is.Equal(len(ch.msgs), 0)
+}
+
+func TestDispatchSubmit_FiresAdvanceTurnWhenAllSubmitted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeSinglePlayerSession(d, ch, "chan1") // one player: u1 only
+
+	resp, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.NoErr(err)
+	if resp == "Orders submitted." {
+		t.Error("expected early-resolution response, got plain submit response")
+	}
+
+	// PhaseResolved event must have been posted to the game channel.
+	is.Equal(len(ch.msgs), 1)
+	var env events.Envelope
+	is.NoErr(json.Unmarshal([]byte(ch.msgs[0]), &env))
+	is.Equal(env.Type, events.TypePhaseResolved)
+}
+
+func TestDispatchSubmit_RejectsDMHistoryError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	// WriteDM succeeds but DMHistory fails on the check call.
+	ch.dmHistErr = errors.New("dm history unavailable")
+
+	_, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchSubmit_RejectsAdvanceTurnError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeSinglePlayerSession(d, ch, "chan1")
+	// Make resolve fail so AdvanceTurn returns an error.
+	sess.Eng = &mockEngine{
+		phase:      "Spring 1901 Movement",
+		dump:       []byte(`{}`),
+		resolveErr: errors.New("resolve failed"),
+	}
+
+	_, err := d.Dispatch(dmCmd("submit", "chan1", "u1"))
+	is.Err(err)
+}
+
+// ---- allNationsSubmitted edge cases -----------------------------------------
+
+// TestAllNationsSubmitted_SkipsNonOrderSubmittedEvents verifies that
+// non-OrderSubmitted envelopes in DM history are ignored.
+func TestAllNationsSubmitted_SkipsNonOrderSubmittedEvents(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	// Pre-populate u1's DM with a GameCreated event (wrong type) and a
+	// malformed JSON message before the valid OrderSubmitted.
+	_ = ch.SendDM("u1", "not-json-at-all")
+	_ = events.WriteDM(ch, "u1", events.TypeGameCreated, events.GameCreated{Variant: "classical"})
+	// Malformed OrderSubmitted payload.
+	badEnv := events.Envelope{Type: events.TypeOrderSubmitted, Payload: json.RawMessage(`"bad"`)}
+	badData, _ := json.Marshal(badEnv)
+	_ = ch.SendDM("u1", string(badData))
+	// Wrong phase.
+	_ = events.WriteDM(ch, "u1", events.TypeOrderSubmitted, events.OrderSubmitted{
+		Nation: "England", Phase: "Fall 1901 Movement",
+	})
+
+	sess := &session.Session{
+		Phase:        "Spring 1901 Movement",
+		Players:      map[string]string{"u1": "England"},
+		StagedOrders: make(map[string][]string),
+		Submitted:    make(map[string]bool),
+	}
+
+	done, err := d.allNationsSubmitted(sess)
+	is.NoErr(err)
+	is.Equal(done, false) // no valid OrderSubmitted for the current phase
 }

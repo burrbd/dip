@@ -147,8 +147,9 @@ type OrderResult struct {
 
 // game implements Engine around a gameState.
 type game struct {
-	adj    gameState
-	parser orderParser
+	adj      gameState
+	parser   orderParser
+	advanced bool // true after Resolve() has called Next(); tells Advance() to skip Next()
 }
 
 // New creates an Engine for the named Diplomacy variant (currently "classical").
@@ -203,6 +204,8 @@ func (g *game) SubmitOrder(nation, orderText string) error {
 }
 
 // Resolve adjudicates all staged orders and returns a summary of outcomes.
+// It fills NMR orders, calls godip Next() to adjudicate, and compares unit
+// positions before and after to determine per-order success.
 func (g *game) Resolve() (ResolutionResult, error) {
 	phase := g.adj.Phase()
 	result := ResolutionResult{
@@ -210,15 +213,56 @@ func (g *game) Resolve() (ResolutionResult, error) {
 		Year:  phase.Year(),
 	}
 
-	for prov, ord := range g.adj.Orders() {
-		err := g.adj.Resolve(prov)
+	// Snapshot player orders and unit positions before NMR fill and Next().
+	stagedOrders := g.adj.Orders()
+	preUnits := g.adj.Units()
+
+	// Fill NMR so all units have orders before adjudication.
+	fillNMR(g.adj)
+
+	// Advance the state — this is where godip adjudicates all orders.
+	next, err := g.adj.Next()
+	if err != nil {
+		return result, err
+	}
+	g.adj = next
+	g.advanced = true
+
+	postUnits := g.adj.Units()
+
+	for prov, ord := range stagedOrders {
 		result.Orders = append(result.Orders, OrderResult{
 			Province: string(prov),
 			Order:    string(ord.Type()),
-			Success:  err == nil,
+			Success:  moveSucceeded(ord, prov, preUnits, postUnits),
 		})
 	}
 	return result, nil
+}
+
+// moveSucceeded reports whether an order succeeded. For Move orders it checks
+// whether the unit arrived at its destination; all other order types return true.
+func moveSucceeded(ord adjOrder, src godip.Province, pre, post map[godip.Province]godip.Unit) bool {
+	order, ok := ord.(godip.Order)
+	if !ok || order.Type() != godip.Move {
+		return true
+	}
+	targets := order.Targets()
+	if len(targets) < 2 {
+		return true // defensive; real Move orders always have exactly 2 targets
+	}
+	preUnit, hadUnit := pre[src]
+	if !hadUnit {
+		return true // no pre-existing unit to track
+	}
+	dst := targets[1]
+	// Check destination province and its super-province (for coastal variants).
+	for _, p := range []godip.Province{dst, dst.Super()} {
+		if u, found := post[p]; found && u.Nation == preUnit.Nation {
+			return true
+		}
+	}
+	return false
 }
 
 // Dump serialises the current game state to JSON.

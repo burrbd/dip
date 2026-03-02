@@ -5,7 +5,24 @@ import "github.com/zond/godip"
 // Advance fills NMR orders for any unit without a staged order, advances the
 // game to the next phase via godip Next(), and auto-skips empty retreat or
 // adjustment phases (phases where no unit requires an order).
+//
+// When Resolve() has already called Next() (g.advanced == true), Advance()
+// clears the flag and only handles empty-phase skipping.
 func (g *game) Advance() error {
+	if g.advanced {
+		g.advanced = false
+		// State was already advanced by Resolve(); only skip empty phases.
+		for isEmptyPhase(g.adj) {
+			fillNMR(g.adj)
+			next, err := g.adj.Next()
+			if err != nil {
+				return err
+			}
+			g.adj = next
+		}
+		return nil
+	}
+
 	fillNMR(g.adj)
 
 	next, err := g.adj.Next()

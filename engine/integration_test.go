@@ -152,8 +152,9 @@ func TestClassicalOrderParser_Parse(t *testing.T) {
 	p := classicalOrderParser{}
 	prov, order, err := p.Parse("Austria", "A Vie-Bud")
 	is.NoErr(err)
-	is.Equal(prov, godip.Province("Vie-Bud")) // stub parser: second token is province
+	is.Equal(prov, godip.Province("vie")) // real parser: lowercase source province
 	is.NotNil(order)
+	is.Equal(order.Type(), godip.Move) // real godip Move adjudicator
 }
 
 func TestClassicalOrderParser_TooFewTokens(t *testing.T) {
@@ -256,9 +257,49 @@ func TestClassicalStartWith_Error(t *testing.T) {
 	is.Err(err)
 }
 
-
-func TestParsedOrder_Type(t *testing.T) {
+func TestResolve_BouncedMove_SuccessFalse(t *testing.T) {
 	is := is.New(t)
-	o := &parsedOrder{orderText: "A Vie-Bud"}
-	is.Equal(o.Type(), godip.OrderType("A Vie-Bud"))
+	e, err := New("classical")
+	is.NoErr(err)
+	// Both France (Par) and Germany (Mun) try to move into Burgundy → bounce.
+	is.NoErr(e.SubmitOrder("France", "A Par-Bur"))
+	is.NoErr(e.SubmitOrder("Germany", "A Mun-Bur"))
+
+	result, err := e.Resolve()
+	is.NoErr(err)
+
+	// Both Move orders must report failure.
+	successes := make(map[string]bool)
+	for _, o := range result.Orders {
+		if o.Province == "par" || o.Province == "mun" {
+			successes[o.Province] = o.Success
+		}
+	}
+	is.Equal(successes["par"], false)
+	is.Equal(successes["mun"], false)
+}
+
+func TestResolve_SupportedMove_SuccessTrue(t *testing.T) {
+	is := is.New(t)
+	e, err := New("classical")
+	is.NoErr(err)
+	// France supports Par→Bur; Germany contests from Mun.
+	// The supported move should win: Par arrives at Bur.
+	is.NoErr(e.SubmitOrder("France", "A Par-Bur"))
+	is.NoErr(e.SubmitOrder("France", "A Mar S A Par-Bur"))
+	is.NoErr(e.SubmitOrder("Germany", "A Mun-Bur"))
+
+	result, err := e.Resolve()
+	is.NoErr(err)
+
+	// The Par→Bur order must report success.
+	var parResult *OrderResult
+	for i := range result.Orders {
+		if result.Orders[i].Province == "par" {
+			parResult = &result.Orders[i]
+			break
+		}
+	}
+	is.NotNil(parResult)
+	is.Equal(parResult.Success, true)
 }

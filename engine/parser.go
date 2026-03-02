@@ -2,9 +2,9 @@ package engine
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/zond/godip"
+	"github.com/zond/godip/variants/classical"
 )
 
 // orderParser parses a text order string for a given nation into a source
@@ -14,22 +14,14 @@ type orderParser interface {
 }
 
 // classicalOrderParser is the production parser for the Classical variant.
-// It uses a simple tokeniser that extracts the source province from the order
-// text (e.g. "A Vie-Bud" → province "Vie").  Full order semantics are
-// delegated to the real godip adjudicator via the stateWrapper.
+// It uses classical.DATCOrder to convert player order text (e.g. "A Vie-Bud")
+// into a real godip.Adjudicator that can be staged for adjudication.
 type classicalOrderParser struct{}
 
 func (classicalOrderParser) Parse(_ godip.Nation, orderText string) (godip.Province, adjOrder, error) {
-	parts := strings.Fields(orderText)
-	if len(parts) < 2 {
-		return "", nil, fmt.Errorf("invalid order %q: too few tokens", orderText)
+	prov, order, err := classical.DATCOrder(orderText)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid order %q: %w", orderText, err)
 	}
-	// First token is unit type (A/F), second is province.
-	src := godip.Province(parts[1])
-	return src, &parsedOrder{orderText: orderText}, nil
+	return prov, order, nil
 }
-
-// parsedOrder is a minimal adjOrder returned by classicalOrderParser.
-type parsedOrder struct{ orderText string }
-
-func (o *parsedOrder) Type() godip.OrderType { return godip.OrderType(o.orderText) }

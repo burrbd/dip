@@ -115,7 +115,7 @@ The original stub modelled `godip.Adjudicator` as the game-state object (with `P
 | Per-province order | `godip.Order` | `godip.Adjudicator` |
 | Phase advance | `Next() (Adjudicator, error)` | `(*state.State).Next() error` (in-place) |
 | Serialization | `Load([]byte) (Adjudicator, error)` | No built-in JSON; 6 raw maps via `Units()`, etc. |
-| Order parser | `classical.Parser.Parse([]string)` | `orders.ParseOrder()` tokens |
+| Order parser | `classical.Parser.Parse([]string)` | `classical.DATCOrder(text)` (regex, returns province + `godip.Adjudicator`) |
 
 ### engine/ internal interface shim
 
@@ -150,9 +150,37 @@ type gameState interface {
 
 ### Known stubs still in engine/
 
-- **`classicalOrderParser`** — tokenizes order text (`"A Vie-Bud"` → province `"Vie"`) but does not convert the text into a real `godip.Adjudicator` order. Real order submission passes a `parsedOrder` (which carries the raw text as its `Type()`). Full integration with `godip/orders` parsing is deferred.
-- **`stateWrapper.Resolve()`** — returns `nil` unconditionally. Real adjudication happens inside `(*state.State).Next()`. The `engine.Resolve()` method collects order summaries but does not call per-province resolution before advancing.
 - **`buildStateFromSnapshot` error paths** — `SetUnits` and `SetDislodgeds` rarely return errors in practice; these branches exist for safety but are not reachable in normal test scenarios (engine coverage sits at ~98%).
+
+### classical.DATCOrder — text format reference
+
+`classical.DATCOrder(text string) (godip.Province, godip.Adjudicator, error)` in
+`vendor/github.com/zond/godip/variants/classical/datc.go` uses case-insensitive regex to
+parse standard Diplomacy notation. Accepted formats:
+
+| Order type | Example text |
+|---|---|
+| Move | `"A Vie-Bud"`, `"F Nap-Ion via convoy"` |
+| Hold | `"A Vie H"`, `"A Vie Hold"` |
+| Support Hold | `"A Vie S A Bud"` |
+| Support Move | `"A Mar S A Par-Bur"`, `"A Mar S Par-Bur"` (unit type optional) |
+| Convoy | `"F Ion C A Nap-Tun"` |
+| Build | `"Build A Vie"`, `"Build F Tri"` |
+| Disband | `"A Vie disband"` |
+| Remove | `"remove A Vie"` |
+
+Key properties of the returned values:
+- **Province names are always lowercase** — e.g. `"A Vie-Bud"` returns source province `"vie"`, not `"Vie"`. All godip province lookups are case-sensitive and lowercase.
+- **`Targets()` for a Move order returns exactly `[src, dst]`** — two elements, both lowercase provinces. This is reliable and safe to index directly.
+- **`godip.Order` interface requires `At() time.Time`** — easy to miss when writing test mocks; omitting it causes a compile-time "missing method At" error.
+
+### Resolve() + Advance() coordination
+
+`engine.Resolve()` now calls `fillNMR()` + `Next()` internally and compares pre/post unit
+positions to populate `OrderResult.Success` accurately via `moveSucceeded()`. To avoid a
+double `Next()` call, the `game` struct carries an `advanced bool` flag: `Resolve()` sets
+it; `Advance()` skips the main `Next()` call when `advanced=true` and only handles
+empty-phase skipping.
 
 ---
 

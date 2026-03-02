@@ -28,7 +28,8 @@ func (g *game) Advance() error {
 }
 
 // fillNMR stages a default order for every unit that has not yet received an
-// order this phase.
+// order this phase. During the Retreat phase it also fills default (disband)
+// orders for dislodged units that have no retreat order.
 func fillNMR(adj godip.Adjudicator) {
 	phase := adj.Phase()
 	if phase == nil {
@@ -39,6 +40,15 @@ func fillNMR(adj godip.Adjudicator) {
 		if _, hasOrder := orders[prov]; !hasOrder {
 			if def := phase.DefaultOrder(prov); def != nil {
 				adj.SetOrder(prov, def)
+			}
+		}
+	}
+	if phase.Type() == godip.Retreat {
+		for prov := range adj.Dislodgeds() {
+			if _, hasOrder := orders[prov]; !hasOrder {
+				if def := phase.DefaultOrder(prov); def != nil {
+					adj.SetOrder(prov, def)
+				}
 			}
 		}
 	}

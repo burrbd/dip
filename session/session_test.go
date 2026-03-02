@@ -89,12 +89,13 @@ type mockEngine struct {
 	submitErr     error
 }
 
-func (e *mockEngine) SubmitOrder(_, _ string) error              { return e.submitErr }
-func (e *mockEngine) Resolve() (engine.ResolutionResult, error)  { return e.resolveResult, e.resolveErr }
-func (e *mockEngine) Advance() error                              { return e.advanceErr }
-func (e *mockEngine) SoloWinner() string                         { return e.soloWinner }
-func (e *mockEngine) Dump() ([]byte, error)                      { return e.dumpData, e.dumpErr }
-func (e *mockEngine) Phase() string                              { return e.phaseStr }
+func (e *mockEngine) SubmitOrder(_, _ string) error             { return e.submitErr }
+func (e *mockEngine) Resolve() (engine.ResolutionResult, error) { return e.resolveResult, e.resolveErr }
+func (e *mockEngine) Advance() error                            { return e.advanceErr }
+func (e *mockEngine) SoloWinner() string                        { return e.soloWinner }
+func (e *mockEngine) Dump() ([]byte, error)                     { return e.dumpData, e.dumpErr }
+func (e *mockEngine) Phase() string                             { return e.phaseStr }
+func (e *mockEngine) Dislodgeds() map[string]string             { return make(map[string]string) }
 
 // ---- helpers ----------------------------------------------------------------
 

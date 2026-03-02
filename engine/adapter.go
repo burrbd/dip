@@ -44,6 +44,10 @@ type Engine interface {
 	// Phase returns the current game phase as a human-readable string
 	// (e.g. "Spring 1901 Movement").
 	Phase() string
+	// Dislodgeds returns a map from province name to nation name for all
+	// dislodged units. Used by the bot to validate retreat and disband orders
+	// during the Retreat phase.
+	Dislodgeds() map[string]string
 }
 
 // ResolutionResult summarises what happened when a phase was adjudicated.
@@ -137,4 +141,14 @@ func (g *game) Phase() string {
 		return ""
 	}
 	return fmt.Sprintf("%s %d %s", phase.Season(), phase.Year(), phase.Type())
+}
+
+// Dislodgeds returns a map from province name to nation name for all dislodged
+// units, so the bot can validate retreat and disband orders.
+func (g *game) Dislodgeds() map[string]string {
+	result := make(map[string]string)
+	for prov, unit := range g.adj.Dislodgeds() {
+		result[string(prov)] = string(unit.Nation)
+	}
+	return result
 }

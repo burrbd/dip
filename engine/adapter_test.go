@@ -398,3 +398,95 @@ func TestFillNMR_NilDefaultOrder(t *testing.T) {
 		t.Errorf("expected no orders set when DefaultOrder returns nil, got %d", len(adj.setOrders))
 	}
 }
+
+func TestFillNMR_FillsDislodgedUnitsInRetreat(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Retreat, year: 1901, season: godip.Spring}
+	adj.dislodgeds = map[godip.Province]godip.Unit{
+		"Vie": {Type: godip.Army, Nation: "Austria"},
+	}
+
+	fillNMR(adj)
+
+	// A default order (disband) must have been staged for the dislodged unit.
+	_, filled := adj.setOrders["Vie"]
+	is.Equal(filled, true)
+}
+
+func TestFillNMR_SkipsDislodgedWithExistingOrder(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Retreat, year: 1901, season: godip.Spring}
+	adj.dislodgeds = map[godip.Province]godip.Unit{
+		"Vie": {Type: godip.Army, Nation: "Austria"},
+	}
+	// Already has an order.
+	existingOrder := &stubOrder{t: "A Vie R Bud"}
+	adj.orders["Vie"] = existingOrder
+
+	fillNMR(adj)
+
+	// The existing order must not be overwritten.
+	is.Equal(adj.setOrders["Vie"], nil)
+}
+
+func TestFillNMR_NilDefaultOrderForDislodged(t *testing.T) {
+	adj := newMockAdj()
+	adj.phase = &mockPhase{
+		typ: godip.Retreat,
+		defaultOrderFn: func(_ godip.Province) godip.Order {
+			return nil
+		},
+	}
+	adj.dislodgeds = map[godip.Province]godip.Unit{
+		"Vie": {Type: godip.Army, Nation: "Austria"},
+	}
+
+	fillNMR(adj)
+
+	if len(adj.setOrders) != 0 {
+		t.Errorf("expected no orders set when DefaultOrder returns nil, got %d", len(adj.setOrders))
+	}
+}
+
+func TestFillNMR_NonRetreatPhaseIgnoresDislodgeds(t *testing.T) {
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Movement, year: 1901, season: godip.Spring}
+	adj.dislodgeds = map[godip.Province]godip.Unit{
+		"Vie": {Type: godip.Army, Nation: "Austria"},
+	}
+
+	fillNMR(adj)
+
+	// Movement phase: dislodgeds must not get orders via fillNMR.
+	if _, set := adj.setOrders["Vie"]; set {
+		t.Error("fillNMR should not stage orders for dislodgeds during non-Retreat phase")
+	}
+}
+
+func TestDislodgeds_ReturnsProvinceToNationMap(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.dislodgeds = map[godip.Province]godip.Unit{
+		"Vie": {Type: godip.Army, Nation: "Austria"},
+		"Mun": {Type: godip.Army, Nation: "Germany"},
+	}
+	g := &game{adj: adj, parser: &mockParser{}}
+
+	result := g.Dislodgeds()
+
+	is.Equal(len(result), 2)
+	is.Equal(result["Vie"], "Austria")
+	is.Equal(result["Mun"], "Germany")
+}
+
+func TestDislodgeds_EmptyWhenNoneDislodged(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	g := &game{adj: adj, parser: &mockParser{}}
+
+	result := g.Dislodgeds()
+
+	is.Equal(len(result), 0)
+}

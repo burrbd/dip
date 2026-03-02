@@ -82,6 +82,7 @@ type mockEngine struct {
 	resolveErr error
 	advanceErr error
 	soloWinner string
+	dislodgeds map[string]string
 }
 
 func (e *mockEngine) SubmitOrder(_, _ string) error {
@@ -90,10 +91,16 @@ func (e *mockEngine) SubmitOrder(_, _ string) error {
 func (e *mockEngine) Resolve() (engine.ResolutionResult, error) {
 	return engine.ResolutionResult{Phase: e.phase}, e.resolveErr
 }
-func (e *mockEngine) Advance() error    { return e.advanceErr }
+func (e *mockEngine) Advance() error     { return e.advanceErr }
 func (e *mockEngine) SoloWinner() string { return e.soloWinner }
 func (e *mockEngine) Dump() ([]byte, error) { return e.dump, e.dumpErr }
 func (e *mockEngine) Phase() string         { return e.phase }
+func (e *mockEngine) Dislodgeds() map[string]string {
+	if e.dislodgeds == nil {
+		return make(map[string]string)
+	}
+	return e.dislodgeds
+}
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -949,4 +956,421 @@ func TestAllNationsSubmitted_SkipsNonOrderSubmittedEvents(t *testing.T) {
 	done, err := d.allNationsSubmitted(sess)
 	is.NoErr(err)
 	is.Equal(done, false) // no valid OrderSubmitted for the current phase
+}
+
+// ---- helpers for retreat/adjustment sessions --------------------------------
+
+// makeRetreatSession creates a session in the Retreat phase with one player (u1→England).
+// The engine has a dislodged Austria army at "Vie" belonging to England.
+func makeRetreatSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"Vie": "England"},
+	}
+	sess := session.New(ch, gameChID, "gm1", "Spring 1901 Retreat", players, 0, eng, &mockNotifier{})
+	d.sessions[gameChID] = sess
+	return sess
+}
+
+// makeAdjustmentSession creates a session in the Adjustment phase with one player (u1→England).
+func makeAdjustmentSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase: "Fall 1901 Adjustment",
+		dump:  []byte(`{}`),
+	}
+	sess := session.New(ch, gameChID, "gm1", "Fall 1901 Adjustment", players, 0, eng, &mockNotifier{})
+	d.sessions[gameChID] = sess
+	return sess
+}
+
+// ---- /retreat ---------------------------------------------------------------
+
+func TestDispatchRetreat_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "retreat", Args: []string{"A", "Vie", "Bud"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchRetreat_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.Err(err)
+}
+
+func TestDispatchRetreat_RejectsNonRetreatPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1") // Movement phase
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.Err(err)
+}
+
+func TestDispatchRetreat_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "outsider", "A", "Vie", "Bud"))
+	is.Err(err)
+}
+
+func TestDispatchRetreat_RejectsMissingArgs(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie")) // missing destination
+	is.Err(err)
+}
+
+func TestDispatchRetreat_RejectsWrongNationDislodged(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeRetreatSession(d, ch, "chan1")
+	// Override dislodgeds so Vie belongs to France, not England.
+	sess.Eng = &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"Vie": "France"},
+	}
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.Err(err)
+}
+
+func TestDispatchRetreat_RejectsNoDislodgedAtProvince(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeRetreatSession(d, ch, "chan1")
+	// No dislodged unit at Mun.
+	sess.Eng = &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"Vie": "England"},
+	}
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Mun", "Boh"))
+	is.Err(err)
+}
+
+func TestDispatchRetreat_RejectsEngineError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeRetreatSession(d, ch, "chan1")
+	sess.Eng = &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"Vie": "England"},
+		orderErr:   errors.New("invalid retreat destination"),
+	}
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bad"))
+	is.Err(err)
+}
+
+func TestDispatchRetreat_StagesRetreatOrder(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeRetreatSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	is.Equal(len(sess.StagedOrders["England"]), 1)
+	is.Equal(sess.StagedOrders["England"][0], "A Vie R Bud")
+}
+
+// ---- /disband ---------------------------------------------------------------
+
+func TestDispatchDisband_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "disband", Args: []string{"A", "Vie"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchDisband_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_RejectsMovementPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1") // Movement phase
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "outsider", "A", "Vie"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_RejectsMissingArgs(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A")) // missing province
+	is.Err(err)
+}
+
+func TestDispatchDisband_RejectsWrongNationDislodgedInRetreat(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeRetreatSession(d, ch, "chan1")
+	sess.Eng = &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"Vie": "France"},
+	}
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_RejectsEngineError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeRetreatSession(d, ch, "chan1")
+	sess.Eng = &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"Vie": "England"},
+		orderErr:   errors.New("bad disband"),
+	}
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_StagesDisbandInRetreatPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeRetreatSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	is.Equal(len(sess.StagedOrders["England"]), 1)
+	is.Equal(sess.StagedOrders["England"][0], "A Vie D")
+}
+
+func TestDispatchDisband_StagesDisbandInAdjustmentPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeAdjustmentSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Lon"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	is.Equal(len(sess.StagedOrders["England"]), 1)
+	is.Equal(sess.StagedOrders["England"][0], "A Lon D")
+}
+
+// ---- /build -----------------------------------------------------------------
+
+func TestDispatchBuild_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "build", Args: []string{"A", "Lon"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchBuild_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
+	is.Err(err)
+}
+
+func TestDispatchBuild_RejectsNonAdjustmentPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1") // Movement phase
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
+	is.Err(err)
+}
+
+func TestDispatchBuild_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "outsider", "A", "Lon"))
+	is.Err(err)
+}
+
+func TestDispatchBuild_RejectsMissingArgs(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A")) // missing province
+	is.Err(err)
+}
+
+func TestDispatchBuild_RejectsEngineError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeAdjustmentSession(d, ch, "chan1")
+	sess.Eng = &mockEngine{
+		phase:    "Fall 1901 Adjustment",
+		dump:     []byte(`{}`),
+		orderErr: errors.New("no build slot available"),
+	}
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
+	is.Err(err)
+}
+
+func TestDispatchBuild_StagesBuildOrder(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeAdjustmentSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	is.Equal(len(sess.StagedOrders["England"]), 1)
+	is.Equal(sess.StagedOrders["England"][0], "A Lon B")
+}
+
+// ---- /waive -----------------------------------------------------------------
+
+func TestDispatchWaive_RejectsNonDM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "waive", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchWaive_RejectsNoActiveGame(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchWaive_RejectsNonAdjustmentPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1") // Movement phase
+
+	_, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchWaive_RejectsNonPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("waive", "chan1", "outsider"))
+	is.Err(err)
+}
+
+func TestDispatchWaive_StagesWaiveOrder(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeAdjustmentSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.NoErr(err)
+	is.Equal(resp, "Waive order staged.")
+	is.Equal(len(sess.StagedOrders["England"]), 1)
+	is.Equal(sess.StagedOrders["England"][0], "Waive")
+}
+
+// ---- /retreat and /disband reject Adjustment / Retreat guard respectively ---
+
+func TestDispatchRetreat_RejectsAdjustmentPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.Err(err)
+}
+
+func TestDispatchBuild_RejectsRetreatPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
+	is.Err(err)
+}
+
+func TestDispatchWaive_RejectsRetreatPhase(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.Err(err)
 }

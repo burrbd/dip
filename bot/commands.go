@@ -75,6 +75,14 @@ func (d *Dispatcher) Dispatch(cmd Command) (string, error) {
 		return d.handleClear(cmd)
 	case "submit":
 		return d.handleSubmit(cmd)
+	case "retreat":
+		return d.handleRetreat(cmd)
+	case "disband":
+		return d.handleDisband(cmd)
+	case "build":
+		return d.handleBuild(cmd)
+	case "waive":
+		return d.handleWaive(cmd)
 	default:
 		return "", fmt.Errorf("bot: unknown command %q", cmd.Name)
 	}
@@ -352,6 +360,136 @@ func (d *Dispatcher) handleSubmit(cmd Command) (string, error) {
 		return "Orders submitted. All nations ready — resolving now!", nil
 	}
 	return "Orders submitted.", nil
+}
+
+// isRetreatPhase returns true if the given phase string is a Retreat phase.
+func isRetreatPhase(phase string) bool {
+	return strings.HasSuffix(phase, "Retreat")
+}
+
+// isAdjustmentPhase returns true if the given phase string is an Adjustment phase.
+func isAdjustmentPhase(phase string) bool {
+	return strings.HasSuffix(phase, "Adjustment")
+}
+
+// handleRetreat processes /retreat <unit_type> <source> <destination> (DM only, Retreat phase).
+// It validates the source province has a dislodged unit belonging to the caller's nation,
+// then stages a retreat order.
+func (d *Dispatcher) handleRetreat(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /retreat must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	if !isRetreatPhase(sess.Phase) {
+		return "", fmt.Errorf("bot: /retreat is only valid during the Retreat phase (current: %s)", sess.Phase)
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	if len(cmd.Args) < 3 {
+		return "", fmt.Errorf("bot: usage: /retreat <unit_type> <source> <destination>")
+	}
+	unitType, src, dest := cmd.Args[0], cmd.Args[1], cmd.Args[2]
+	dislodgeds := sess.Eng.Dislodgeds()
+	if n, exists := dislodgeds[src]; !exists || n != nation {
+		return "", fmt.Errorf("bot: no dislodged %s unit at %s belonging to %s", unitType, src, nation)
+	}
+	orderText := fmt.Sprintf("%s %s R %s", unitType, src, dest)
+	if err := sess.Eng.SubmitOrder(nation, orderText); err != nil {
+		return "", fmt.Errorf("bot: invalid retreat order: %w", err)
+	}
+	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+	return fmt.Sprintf("Retreat order staged: %s", orderText), nil
+}
+
+// handleDisband processes /disband <unit_type> <province> (DM only, Retreat or Adjustment phase).
+// During the Retreat phase it validates the province has a dislodged unit belonging to the nation.
+func (d *Dispatcher) handleDisband(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /disband must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	if !isRetreatPhase(sess.Phase) && !isAdjustmentPhase(sess.Phase) {
+		return "", fmt.Errorf("bot: /disband is only valid during Retreat or Adjustment phase (current: %s)", sess.Phase)
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	if len(cmd.Args) < 2 {
+		return "", fmt.Errorf("bot: usage: /disband <unit_type> <province>")
+	}
+	unitType, src := cmd.Args[0], cmd.Args[1]
+	if isRetreatPhase(sess.Phase) {
+		dislodgeds := sess.Eng.Dislodgeds()
+		if n, exists := dislodgeds[src]; !exists || n != nation {
+			return "", fmt.Errorf("bot: no dislodged %s unit at %s belonging to %s", unitType, src, nation)
+		}
+	}
+	orderText := fmt.Sprintf("%s %s D", unitType, src)
+	if err := sess.Eng.SubmitOrder(nation, orderText); err != nil {
+		return "", fmt.Errorf("bot: invalid disband order: %w", err)
+	}
+	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+	return fmt.Sprintf("Disband order staged: %s", orderText), nil
+}
+
+// handleBuild processes /build <unit_type> <province> (DM only, Adjustment phase).
+// It stages a build order for the caller's nation.
+func (d *Dispatcher) handleBuild(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /build must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	if !isAdjustmentPhase(sess.Phase) {
+		return "", fmt.Errorf("bot: /build is only valid during the Adjustment phase (current: %s)", sess.Phase)
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	if len(cmd.Args) < 2 {
+		return "", fmt.Errorf("bot: usage: /build <unit_type> <province>")
+	}
+	unitType, province := cmd.Args[0], cmd.Args[1]
+	orderText := fmt.Sprintf("%s %s B", unitType, province)
+	if err := sess.Eng.SubmitOrder(nation, orderText); err != nil {
+		return "", fmt.Errorf("bot: invalid build order: %w", err)
+	}
+	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+	return fmt.Sprintf("Build order staged: %s", orderText), nil
+}
+
+// handleWaive processes /waive (DM only, Adjustment phase).
+// It stages a waive order for one available build slot, without engine validation
+// since a waive has no associated unit province.
+func (d *Dispatcher) handleWaive(cmd Command) (string, error) {
+	if !cmd.IsDM {
+		return "", fmt.Errorf("bot: /waive must be sent as a direct message to the bot")
+	}
+	sess, ok := d.sessions[cmd.GameChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found")
+	}
+	if !isAdjustmentPhase(sess.Phase) {
+		return "", fmt.Errorf("bot: /waive is only valid during the Adjustment phase (current: %s)", sess.Phase)
+	}
+	nation, ok := sess.Players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], "Waive")
+	return "Waive order staged.", nil
 }
 
 // allNationsSubmitted reads each player's DM thread to check whether every

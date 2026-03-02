@@ -28,7 +28,7 @@ engine/
   adapter.go         — internal gameState/gamePhase/adjOrder interfaces + stateWrapper/phaseWrapper adapters;
                        classicalLoader/classicalStartWith for snapshot restore; Engine public API
   phases.go          — phase advance (Advance()), NMR DefaultOrder() fill (fillNMR), phase-skip logic
-  parser.go          — text order tokenizer (classicalOrderParser); parsedOrder stub adjOrder
+  parser.go          — classicalOrderParser: wraps classical.DATCOrder() to produce real godip.Adjudicator orders
   winner.go          — solo win / draw detection (polls SoloWinner after Fall Adjustment)
 
 session/
@@ -122,20 +122,22 @@ recorded until captured.
 ### Resolve() semantics
 
 Real godip adjudicates all orders atomically inside `(*state.State).Next()`. There is no
-per-province resolution API. `engine.Resolve()` therefore collects order summaries
-(province, order text, success=true) as a pre-advance snapshot, then `engine.Advance()`
-calls `Next()` to adjudicate. This means `Success` in `OrderResult` is always `true` in
-the current implementation — real failure detection requires post-`Next()` comparison of
-unit positions. This is a **known gap** to address in a future story.
+per-province resolution API. `engine.Resolve()` therefore:
+1. Snapshots staged orders and unit positions before adjudication.
+2. Calls `fillNMR()` then `Next()` to adjudicate (state advances in-place inside `stateWrapper`).
+3. Compares pre/post unit positions via `moveSucceeded()` to set `OrderResult.Success` accurately.
+   Move orders succeed when the unit arrives at the destination; all other order types return `true`.
+4. Sets `game.advanced = true` so that the subsequent `Advance()` call skips the main `Next()`
+   and only handles empty-phase skipping.
 
 ### Order parsing
 
-`classicalOrderParser` is a minimal tokenizer: it extracts the source province from the
-second whitespace-delimited token (e.g. `"A Vie-Bud"` → province `"Vie"`) and wraps the
-raw text in a `parsedOrder`. It does **not** produce a real `godip.Adjudicator` order.
-`stateWrapper.SetOrder` silently discards any order that does not implement
-`godip.Adjudicator`, so currently staged orders from text input are no-ops in real
-adjudication. Full integration with `godip/orders` parsing is a future story.
+`classicalOrderParser.Parse` delegates to `classical.DATCOrder(text)` (in
+`vendor/github.com/zond/godip/variants/classical/datc.go`), which uses case-insensitive
+regex to convert player text into a real `godip.Adjudicator`. Supported formats: Move,
+Hold, Support Hold, Support Move, Convoy, Build, Disband, Remove. Province names returned
+by `DATCOrder` are always **lowercase** (e.g. `"A Vie-Bud"` → source province `"vie"`).
+See CLAUDE.md for the full format table.
 
 ---
 

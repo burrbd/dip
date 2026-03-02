@@ -33,6 +33,29 @@ type Session struct {
 	timer    *time.Timer
 }
 
+// New creates a Session with all required dependencies and starts the deadline
+// timer. It is called by the bot after posting a GameStarted event to wire up
+// the in-process deadline manager for the new game.
+func New(ch events.Channel, channelID, gmID, phase string, players map[string]string, deadlineHours int, eng engine.Engine, notifier Notifier) *Session {
+	s := &Session{
+		ChannelID:     channelID,
+		Phase:         phase,
+		StagedOrders:  make(map[string][]string),
+		Players:       make(map[string]string),
+		Submitted:     make(map[string]bool),
+		GMID:          gmID,
+		DeadlineHours: deadlineHours,
+		Eng:           eng,
+		ch:            ch,
+		notifier:      notifier,
+	}
+	for k, v := range players {
+		s.Players[k] = v
+	}
+	s.startDeadline()
+	return s
+}
+
 // CancelDeadline stops any pending deadline timer without firing it.
 func (s *Session) CancelDeadline() {
 	s.mu.Lock()

@@ -120,6 +120,51 @@ func makeSession(ch events.Channel, eng engine.Engine, notifier Notifier) *Sessi
 	}
 }
 
+// ---- New constructor tests --------------------------------------------------
+
+func TestNew_SetsFields(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	eng := defaultEng()
+	notifier := &mockNotifier{}
+	players := map[string]string{"u1": "England", "u2": "France"}
+
+	s := New(ch, "chan1", "gm1", "Spring 1901 Movement", players, 0, eng, notifier)
+
+	is.Equal(s.ChannelID, "chan1")
+	is.Equal(s.GMID, "gm1")
+	is.Equal(s.Phase, "Spring 1901 Movement")
+	is.Equal(s.DeadlineHours, 0)
+	is.Equal(s.Players["u1"], "England")
+	is.Equal(s.Players["u2"], "France")
+	is.Equal(len(s.StagedOrders), 0)
+	is.Equal(len(s.Submitted), 0)
+}
+
+func TestNew_CopiesPlayers(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	players := map[string]string{"u1": "England"}
+
+	s := New(ch, "chan1", "gm1", "Spring 1901 Movement", players, 0, defaultEng(), nil)
+
+	// Mutate source map; session copy must be unaffected.
+	players["u2"] = "France"
+	is.Equal(len(s.Players), 1)
+}
+
+func TestNew_StartsDeadlineWhenPositiveHours(t *testing.T) {
+	ch := &mockChannel{}
+	s := New(ch, "chan1", "gm1", "Spring 1901 Movement", nil, 24, defaultEng(), nil)
+	s.mu.Lock()
+	timerSet := s.timer != nil
+	s.mu.Unlock()
+	if !timerSet {
+		t.Error("expected deadline timer to be started when DeadlineHours > 0")
+	}
+	s.CancelDeadline()
+}
+
 // writeGameStarted posts a minimal GameStarted event to ch.
 func writeGameStarted(ch *mockChannel) {
 	_ = events.Write(ch, "chan1", events.TypeGameStarted,

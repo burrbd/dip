@@ -23,7 +23,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 1 — godip Engine Adapter
 - [x] Story 2 — Event Log
 - [x] Story 3 — Session Management
-- [ ] Story 4 — Bot Command Router + Game Setup
+- [x] Story 4 — Bot Command Router + Game Setup
 - [ ] Story 5 — Movement Phase Commands
 - [ ] Story 6 — Retreat & Adjustment Commands
 - [ ] Story 7 — Info Commands

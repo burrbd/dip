@@ -52,6 +52,8 @@ func (m *mockChannel) DMHistory(userID string) ([]string, error) {
 	return m.dms[userID], nil
 }
 
+func (m *mockChannel) PostImage(_ string, _ []byte) error { return nil }
+
 // TestWrite_PostsJSONEnvelope verifies that Write encodes the event as a JSON
 // Envelope and posts it to the channel.
 func TestWrite_PostsJSONEnvelope(t *testing.T) {

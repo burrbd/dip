@@ -26,6 +26,12 @@ func loadFromSnapshot(snapshot []byte, loader func([]byte) (godip.Adjudicator, e
 	return &game{adj: adj, parser: classical.Parser}, nil
 }
 
+// UnitInfo holds the type and owning nation of a unit on the board.
+type UnitInfo struct {
+	Type   string
+	Nation string
+}
+
 // Engine is the public interface for interacting with a running Diplomacy game.
 // All methods operate on the current game phase.
 type Engine interface {
@@ -48,6 +54,10 @@ type Engine interface {
 	// dislodged units. Used by the bot to validate retreat and disband orders
 	// during the Retreat phase.
 	Dislodgeds() map[string]string
+	// SupplyCenters returns the number of supply centers owned by each nation.
+	SupplyCenters() map[string]int
+	// Units returns all units on the board keyed by province name.
+	Units() map[string]UnitInfo
 }
 
 // ResolutionResult summarises what happened when a phase was adjudicated.
@@ -149,6 +159,27 @@ func (g *game) Dislodgeds() map[string]string {
 	result := make(map[string]string)
 	for prov, unit := range g.adj.Dislodgeds() {
 		result[string(prov)] = string(unit.Nation)
+	}
+	return result
+}
+
+// SupplyCenters returns the number of supply centers owned by each nation.
+func (g *game) SupplyCenters() map[string]int {
+	result := make(map[string]int)
+	for _, nation := range g.adj.SupplyCenters() {
+		result[string(nation)]++
+	}
+	return result
+}
+
+// Units returns all units on the board keyed by province name.
+func (g *game) Units() map[string]UnitInfo {
+	result := make(map[string]UnitInfo)
+	for prov, unit := range g.adj.Units() {
+		result[string(prov)] = UnitInfo{
+			Type:   string(unit.Type),
+			Nation: string(unit.Nation),
+		}
 	}
 	return result
 }

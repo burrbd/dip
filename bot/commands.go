@@ -7,8 +7,10 @@ package bot
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/burrbd/dip/dipmap"
 	"github.com/burrbd/dip/engine"
 	"github.com/burrbd/dip/events"
 	"github.com/burrbd/dip/session"
@@ -40,21 +42,26 @@ type EngineFactory func(variant string) (engine.Engine, error)
 
 // Dispatcher routes commands to their handlers and holds in-process sessions.
 type Dispatcher struct {
-	ch       events.Channel
-	notifier session.Notifier
-	loader   session.EngineLoader
-	newEng   EngineFactory
-	sessions map[string]*session.Session
+	ch          events.Channel
+	notifier    session.Notifier
+	loader      session.EngineLoader
+	newEng      EngineFactory
+	sessions    map[string]*session.Session
+	graph       dipmap.Graph                              // optional board graph for /map neighbourhood queries
+	renderFn    func(dipmap.EngineState) ([]byte, error) // defaults to dipmap.Render
+	highlightFn func([]byte, []string) ([]byte, error)   // defaults to dipmap.Highlight
 }
 
 // New returns a Dispatcher wired to the given dependencies.
 func New(ch events.Channel, notifier session.Notifier, loader session.EngineLoader, newEng EngineFactory) *Dispatcher {
 	return &Dispatcher{
-		ch:       ch,
-		notifier: notifier,
-		loader:   loader,
-		newEng:   newEng,
-		sessions: make(map[string]*session.Session),
+		ch:          ch,
+		notifier:    notifier,
+		loader:      loader,
+		newEng:      newEng,
+		sessions:    make(map[string]*session.Session),
+		renderFn:    dipmap.Render,
+		highlightFn: dipmap.Highlight,
 	}
 }
 
@@ -83,6 +90,14 @@ func (d *Dispatcher) Dispatch(cmd Command) (string, error) {
 		return d.handleBuild(cmd)
 	case "waive":
 		return d.handleWaive(cmd)
+	case "status":
+		return d.handleStatus(cmd)
+	case "history":
+		return d.handleHistory(cmd)
+	case "map":
+		return d.handleMap(cmd)
+	case "help":
+		return d.handleHelp(cmd)
 	default:
 		return "", fmt.Errorf("bot: unknown command %q", cmd.Name)
 	}
@@ -490,6 +505,147 @@ func (d *Dispatcher) handleWaive(cmd Command) (string, error) {
 	}
 	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], "Waive")
 	return "Waive order staged.", nil
+}
+
+// handleStatus processes /status — shows current phase, SC counts, and
+// order submission status per nation. Requires an active in-memory session.
+func (d *Dispatcher) handleStatus(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+	scCounts := sess.Eng.SupplyCenters()
+	return FormatStatus(sess.Phase, sess.Players, sess.Submitted, scCounts), nil
+}
+
+// handleHistory processes /history <turn> — fetches the PhaseResolved event
+// matching the given turn string and returns its result summary.
+func (d *Dispatcher) handleHistory(cmd Command) (string, error) {
+	if len(cmd.Args) == 0 {
+		return "", fmt.Errorf("bot: usage: /history <turn>")
+	}
+	turn := strings.Join(cmd.Args, " ")
+
+	envs, err := events.Scan(d.ch, cmd.ChannelID)
+	if err != nil {
+		return "", fmt.Errorf("bot: scan history: %w", err)
+	}
+
+	// Search in reverse order so the most recent matching phase is preferred.
+	for i := len(envs) - 1; i >= 0; i-- {
+		if envs[i].Type != events.TypePhaseResolved {
+			continue
+		}
+		var pr events.PhaseResolved
+		if err := json.Unmarshal(envs[i].Payload, &pr); err != nil {
+			continue
+		}
+		if strings.Contains(pr.Phase, turn) {
+			if len(pr.ResultSummary) > 0 {
+				return string(pr.ResultSummary), nil
+			}
+			return fmt.Sprintf("Phase %s resolved (no result summary).", pr.Phase), nil
+		}
+	}
+	return "", fmt.Errorf("bot: no history found for turn %q", turn)
+}
+
+// boardGraph returns the Dispatcher's graph or EmptyGraph if none is set.
+func (d *Dispatcher) boardGraph() dipmap.Graph {
+	if d.graph != nil {
+		return d.graph
+	}
+	return dipmap.EmptyGraph{}
+}
+
+// handleMap processes /map [territory [n]] — renders the board and posts it
+// as an image. With a territory argument, highlights the territory and all
+// provinces within n hops (default 0).
+func (d *Dispatcher) handleMap(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+
+	var png []byte
+	var renderErr error
+
+	if len(cmd.Args) == 0 {
+		png, renderErr = d.renderFn(sess.Eng)
+	} else {
+		territory := cmd.Args[0]
+		n := 0
+		if len(cmd.Args) >= 2 {
+			parsed, err := strconv.Atoi(cmd.Args[1])
+			if err != nil {
+				return "", fmt.Errorf("bot: invalid radius %q: must be an integer", cmd.Args[1])
+			}
+			n = parsed
+		}
+		provinces := dipmap.Neighborhood(d.boardGraph(), territory, n)
+		svg, err := d.renderFn(sess.Eng)
+		if err != nil {
+			return "", fmt.Errorf("bot: render map: %w", err)
+		}
+		png, renderErr = d.highlightFn(svg, provinces)
+	}
+
+	if renderErr != nil {
+		return "", fmt.Errorf("bot: render map: %w", renderErr)
+	}
+	if err := d.ch.PostImage(cmd.ChannelID, png); err != nil {
+		return "", fmt.Errorf("bot: post map: %w", err)
+	}
+	return "Map posted.", nil
+}
+
+// commandHelp maps command names to their help text.
+var commandHelp = map[string]string{
+	"newgame": "/newgame — Start a new game in this channel. You become the GM.",
+	"join":    "/join <nation> — Join the game as a nation (e.g. England, France).",
+	"start":   "/start — Start the game (GM only). Requires 2–7 players.",
+	"order":   "/order <order-text> — Submit a movement order (DM only, Movement phase).",
+	"orders":  "/orders — List your staged orders for the current phase (DM only).",
+	"clear":   "/clear [order] — Clear all staged orders or a specific one (DM only).",
+	"submit":  "/submit — Finalise and submit your orders (DM only, Movement phase).",
+	"retreat": "/retreat <unit_type> <source> <destination> — Retreat a dislodged unit (DM only, Retreat phase).",
+	"disband": "/disband <unit_type> <province> — Disband a unit (DM only, Retreat or Adjustment phase).",
+	"build":   "/build <unit_type> <province> — Build a unit (DM only, Adjustment phase).",
+	"waive":   "/waive — Waive a build slot (DM only, Adjustment phase).",
+	"status":  "/status — Show current phase, SC counts, and submission status.",
+	"history": "/history <turn> — Show adjudication results for a past turn (e.g. /history Spring 1901).",
+	"map":     "/map [territory [n]] — Post the board map. With args, highlights territory and all provinces within n hops.",
+	"help":    "/help [command] — List all commands or show help for a specific command.",
+}
+
+// commandList defines the canonical display order for /help.
+var commandList = []string{
+	"newgame", "join", "start",
+	"order", "orders", "clear", "submit",
+	"retreat", "disband", "build", "waive",
+	"status", "history", "map", "help",
+}
+
+// handleHelp processes /help [command] — lists all commands or shows detailed
+// usage for a specific command.
+func (d *Dispatcher) handleHelp(cmd Command) (string, error) {
+	if len(cmd.Args) == 0 {
+		var sb strings.Builder
+		fmt.Fprintln(&sb, "Available commands:")
+		for _, name := range commandList {
+			fmt.Fprintf(&sb, "  %s\n", commandHelp[name])
+		}
+		return strings.TrimRight(sb.String(), "\n"), nil
+	}
+
+	name := cmd.Args[0]
+	if strings.HasPrefix(name, "/") {
+		name = name[1:]
+	}
+	if text, ok := commandHelp[name]; ok {
+		return text, nil
+	}
+	return "", fmt.Errorf("bot: unknown command %q; use /help for a list", cmd.Args[0])
 }
 
 // allNationsSubmitted reads each player's DM thread to check whether every

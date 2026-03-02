@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/burrbd/dip/dipmap"
 	"github.com/burrbd/dip/engine"
 	"github.com/burrbd/dip/events"
 	"github.com/burrbd/dip/session"
@@ -16,6 +17,7 @@ import (
 type mockChannel struct {
 	msgs      []string
 	dms       map[string][]string
+	imgs      [][]byte
 	postErr   error
 	histErr   error
 	dmPostErr error
@@ -53,6 +55,14 @@ func (m *mockChannel) DMHistory(userID string) ([]string, error) {
 		return nil, m.dmHistErr
 	}
 	return m.dms[userID], nil
+}
+
+func (m *mockChannel) PostImage(_ string, data []byte) error {
+	if m.postErr != nil {
+		return m.postErr
+	}
+	m.imgs = append(m.imgs, data)
+	return nil
 }
 
 func (m *mockChannel) lastEventType() events.EventType {
@@ -101,6 +111,8 @@ func (e *mockEngine) Dislodgeds() map[string]string {
 	}
 	return e.dislodgeds
 }
+func (e *mockEngine) SupplyCenters() map[string]int         { return make(map[string]int) }
+func (e *mockEngine) Units() map[string]engine.UnitInfo     { return make(map[string]engine.UnitInfo) }
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -1372,5 +1384,332 @@ func TestDispatchWaive_RejectsRetreatPhase(t *testing.T) {
 	makeRetreatSession(d, ch, "chan1")
 
 	_, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.Err(err)
+}
+
+// ---- /status ----------------------------------------------------------------
+
+func TestDispatchStatus_RejectsNoSession(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "status", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchStatus_ReturnsPhaseAndNations(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(Command{Name: "status", ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "Spring 1901 Movement") {
+		t.Errorf("expected phase in status output, got: %q", resp)
+	}
+	if !containsStr(resp, "England") {
+		t.Errorf("expected England in status output, got: %q", resp)
+	}
+}
+
+// ---- /history ---------------------------------------------------------------
+
+func TestDispatchHistory_RejectsMissingArg(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "history", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchHistory_RejectsChannelError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{histErr: errors.New("channel down")}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "history", Args: []string{"Spring 1901"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchHistory_RejectsNotFound(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "history", Args: []string{"Spring 1901"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchHistory_ReturnsResultSummary(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	_ = events.Write(ch, "chan1", events.TypePhaseResolved, events.PhaseResolved{
+		Phase:         "Spring 1901 Movement",
+		StateSnapshot: json.RawMessage(`{}`),
+		ResultSummary: json.RawMessage(`"Spring 1901 resolved"`),
+	})
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "history", Args: []string{"Spring 1901"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "Spring 1901 resolved") {
+		t.Errorf("expected result summary in response, got: %q", resp)
+	}
+}
+
+func TestDispatchHistory_NoResultSummaryFallback(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	_ = events.Write(ch, "chan1", events.TypePhaseResolved, events.PhaseResolved{
+		Phase:         "Spring 1901 Movement",
+		StateSnapshot: json.RawMessage(`{}`),
+	})
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "history", Args: []string{"Spring 1901"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "Spring 1901 Movement") {
+		t.Errorf("expected phase in fallback response, got: %q", resp)
+	}
+}
+
+func TestDispatchHistory_SkipsMalformedPhaseResolved(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	// Valid one first (earliest in history).
+	_ = events.Write(ch, "chan1", events.TypePhaseResolved, events.PhaseResolved{
+		Phase:         "Fall 1901 Movement",
+		StateSnapshot: json.RawMessage(`{}`),
+		ResultSummary: json.RawMessage(`"Fall 1901 resolved"`),
+	})
+	// Malformed PhaseResolved envelope after (latest in history — hit first by reverse scan).
+	bad := events.Envelope{Type: events.TypePhaseResolved, Payload: json.RawMessage(`"bad"`)}
+	data, _ := json.Marshal(bad)
+	ch.msgs = append(ch.msgs, string(data))
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "history", Args: []string{"Fall 1901"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "Fall 1901 resolved") {
+		t.Errorf("expected result in response, got: %q", resp)
+	}
+}
+
+func TestDispatchHistory_RejectsNotFoundWhenPhaseDoesNotMatch(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	// Seed a valid PhaseResolved whose phase does not match the search term.
+	_ = events.Write(ch, "chan1", events.TypePhaseResolved, events.PhaseResolved{
+		Phase:         "Fall 1901 Movement",
+		StateSnapshot: json.RawMessage(`{}`),
+		ResultSummary: json.RawMessage(`"Fall 1901 resolved"`),
+	})
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "history", Args: []string{"Spring 1901"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+// ---- /map -------------------------------------------------------------------
+
+func TestDispatchMap_RejectsNoSession(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_PostsImageNoArgs(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	is.Equal(resp, "Map posted.")
+	is.Equal(len(ch.imgs), 1)
+}
+
+func TestDispatchMap_PostsImageWithTerritory(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	is.Equal(resp, "Map posted.")
+	is.Equal(len(ch.imgs), 1)
+}
+
+func TestDispatchMap_PostsImageWithTerritoryAndRadius(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	is.Equal(resp, "Map posted.")
+	is.Equal(len(ch.imgs), 1)
+}
+
+func TestDispatchMap_RejectsInvalidRadius(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "notanumber"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_RejectsPostImageError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	ch.postErr = errors.New("image post failed")
+
+	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_RejectsRenderError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	// Inject a render function that always fails.
+	d.renderFn = func(_ dipmap.EngineState) ([]byte, error) {
+		return nil, errors.New("render failed")
+	}
+
+	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_RejectsHighlightError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	// Render succeeds; highlight fails.
+	d.highlightFn = func(_ []byte, _ []string) ([]byte, error) {
+		return nil, errors.New("highlight failed")
+	}
+
+	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_RejectsRenderErrorInTerritoryPath(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	d.renderFn = func(_ dipmap.EngineState) ([]byte, error) {
+		return nil, errors.New("render failed")
+	}
+
+	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_UsesCustomGraph(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+
+	// Set a custom graph on the dispatcher.
+	d.graph = customTestGraph{"Vienna": {"Budapest"}}
+
+	resp, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	is.Equal(resp, "Map posted.")
+	is.Equal(len(ch.imgs), 1)
+}
+
+// customTestGraph is a simple Graph for use in bot tests.
+type customTestGraph map[string][]string
+
+func (g customTestGraph) Edges(t string) []string { return g[t] }
+
+// ---- /history additional coverage ------------------------------------------
+
+func TestDispatchHistory_SkipsNonPhaseResolvedEvents(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	// Valid PhaseResolved first (earliest in history).
+	_ = events.Write(ch, "chan1", events.TypePhaseResolved, events.PhaseResolved{
+		Phase:         "Spring 1901 Movement",
+		StateSnapshot: json.RawMessage(`{}`),
+		ResultSummary: json.RawMessage(`"resolved"`),
+	})
+	// GameCreated (not PhaseResolved) after — hit first by the reverse scan.
+	seedGameCreated(ch, "gm1")
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "history", Args: []string{"Spring 1901"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "resolved") {
+		t.Errorf("expected result in response, got: %q", resp)
+	}
+}
+
+// ---- /help ------------------------------------------------------------------
+
+func TestDispatchHelp_ListsAllCommands(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "help", ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "/newgame") {
+		t.Errorf("expected /newgame in help output, got: %q", resp)
+	}
+	if !containsStr(resp, "/start") {
+		t.Errorf("expected /start in help output, got: %q", resp)
+	}
+}
+
+func TestDispatchHelp_ShowsSpecificCommand(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "help", Args: []string{"order"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "/order") {
+		t.Errorf("expected /order in help output, got: %q", resp)
+	}
+}
+
+func TestDispatchHelp_ShowsSpecificCommandWithSlash(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "help", Args: []string{"/join"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "/join") {
+		t.Errorf("expected /join in help output, got: %q", resp)
+	}
+}
+
+func TestDispatchHelp_RejectsUnknownCommand(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "help", Args: []string{"bogus"}, ChannelID: "chan1", UserID: "u1"})
 	is.Err(err)
 }

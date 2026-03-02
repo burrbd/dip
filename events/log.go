@@ -16,6 +16,8 @@ type Channel interface {
 	SendDM(userID, text string) error
 	// DMHistory returns all messages in the user's DM thread in chronological order.
 	DMHistory(userID string) ([]string, error)
+	// PostImage posts a binary image (e.g. PNG) to the channel identified by channelID.
+	PostImage(channelID string, data []byte) error
 }
 
 // Write serialises payload as a JSON Envelope and posts it to channelID.

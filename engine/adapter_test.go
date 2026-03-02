@@ -12,17 +12,18 @@ import (
 // ---- mock adjudicator -------------------------------------------------------
 
 type mockAdj struct {
-	phase      godip.Phase
-	orders     map[godip.Province]godip.Order
-	units      map[godip.Province]godip.Unit
-	dislodgeds map[godip.Province]godip.Unit
-	winner     godip.Nation
-	nextAdj    godip.Adjudicator
-	nextErr    error
-	resolveErr map[godip.Province]error
-	setOrders  map[godip.Province]godip.Order
-	dumpData   []byte
-	dumpErr    error
+	phase         godip.Phase
+	orders        map[godip.Province]godip.Order
+	units         map[godip.Province]godip.Unit
+	dislodgeds    map[godip.Province]godip.Unit
+	supplyCenters map[godip.Province]godip.Nation
+	winner        godip.Nation
+	nextAdj       godip.Adjudicator
+	nextErr       error
+	resolveErr    map[godip.Province]error
+	setOrders     map[godip.Province]godip.Order
+	dumpData      []byte
+	dumpErr       error
 }
 
 func newMockAdj() *mockAdj {
@@ -40,6 +41,12 @@ func (m *mockAdj) Dislodgeds() map[godip.Province]godip.Unit { return m.dislodge
 func (m *mockAdj) SoloWinner() godip.Nation                  { return m.winner }
 func (m *mockAdj) Dump() ([]byte, error)                     { return m.dumpData, m.dumpErr }
 func (m *mockAdj) Next() (godip.Adjudicator, error)          { return m.nextAdj, m.nextErr }
+func (m *mockAdj) SupplyCenters() map[godip.Province]godip.Nation {
+	if m.supplyCenters == nil {
+		return make(map[godip.Province]godip.Nation)
+	}
+	return m.supplyCenters
+}
 
 func (m *mockAdj) SetOrder(p godip.Province, o godip.Order) {
 	m.setOrders[p] = o
@@ -487,6 +494,61 @@ func TestDislodgeds_EmptyWhenNoneDislodged(t *testing.T) {
 	g := &game{adj: adj, parser: &mockParser{}}
 
 	result := g.Dislodgeds()
+
+	is.Equal(len(result), 0)
+}
+
+func TestSupplyCenters_ReturnsCounts(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.supplyCenters = map[godip.Province]godip.Nation{
+		"Lon": "England",
+		"Edi": "England",
+		"Lvp": "England",
+		"Par": "France",
+	}
+	g := &game{adj: adj, parser: &mockParser{}}
+
+	result := g.SupplyCenters()
+
+	is.Equal(result["England"], 3)
+	is.Equal(result["France"], 1)
+}
+
+func TestSupplyCenters_EmptyWhenNoSCs(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	g := &game{adj: adj, parser: &mockParser{}}
+
+	result := g.SupplyCenters()
+
+	is.Equal(len(result), 0)
+}
+
+func TestUnits_ReturnsBoardUnits(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.units = map[godip.Province]godip.Unit{
+		"Lon": {Type: godip.Fleet, Nation: "England"},
+		"Par": {Type: godip.Army, Nation: "France"},
+	}
+	g := &game{adj: adj, parser: &mockParser{}}
+
+	result := g.Units()
+
+	is.Equal(len(result), 2)
+	is.Equal(result["Lon"].Type, "Fleet")
+	is.Equal(result["Lon"].Nation, "England")
+	is.Equal(result["Par"].Type, "Army")
+	is.Equal(result["Par"].Nation, "France")
+}
+
+func TestUnits_EmptyWhenNoUnits(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	g := &game{adj: adj, parser: &mockParser{}}
+
+	result := g.Units()
 
 	is.Equal(len(result), 0)
 }

@@ -23,8 +23,8 @@ func FormatResult(r engine.ResolutionResult) string {
 }
 
 // FormatStatus renders the current game status as plain text, listing each
-// nation and whether their orders have been submitted for the current phase.
-func FormatStatus(phase string, players map[string]string, submitted map[string]bool) string {
+// nation with their SC count and order submission status for the current phase.
+func FormatStatus(phase string, players map[string]string, submitted map[string]bool, scCounts map[string]int) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Phase: %s\n", phase)
 
@@ -44,7 +44,8 @@ func FormatStatus(phase string, players map[string]string, submitted map[string]
 		if submitted[n] {
 			sub = "submitted"
 		}
-		fmt.Fprintf(&sb, "  %s: %s\n", n, sub)
+		scs := scCounts[n]
+		fmt.Fprintf(&sb, "  %s: %s | %d SCs\n", n, sub, scs)
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }

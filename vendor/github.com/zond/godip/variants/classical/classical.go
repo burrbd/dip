@@ -69,13 +69,14 @@ type classicalState struct {
 	winner     godip.Nation
 }
 
-func (s *classicalState) Phase() godip.Phase                        { return s.phase }
-func (s *classicalState) Orders() map[godip.Province]godip.Order    { return s.orders }
-func (s *classicalState) Units() map[godip.Province]godip.Unit      { return s.units }
-func (s *classicalState) Dislodgeds() map[godip.Province]godip.Unit { return s.dislodgeds }
-func (s *classicalState) SetOrder(p godip.Province, o godip.Order)  { s.orders[p] = o }
-func (s *classicalState) Resolve(_ godip.Province) error            { return nil }
-func (s *classicalState) SoloWinner() godip.Nation                  { return s.winner }
+func (s *classicalState) Phase() godip.Phase                                    { return s.phase }
+func (s *classicalState) Orders() map[godip.Province]godip.Order                { return s.orders }
+func (s *classicalState) Units() map[godip.Province]godip.Unit                  { return s.units }
+func (s *classicalState) Dislodgeds() map[godip.Province]godip.Unit             { return s.dislodgeds }
+func (s *classicalState) SupplyCenters() map[godip.Province]godip.Nation        { return make(map[godip.Province]godip.Nation) }
+func (s *classicalState) SetOrder(p godip.Province, o godip.Order)              { s.orders[p] = o }
+func (s *classicalState) Resolve(_ godip.Province) error                        { return nil }
+func (s *classicalState) SoloWinner() godip.Nation                              { return s.winner }
 
 func (s *classicalState) Next() (godip.Adjudicator, error) {
 	next := &classicalState{

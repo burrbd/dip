@@ -64,6 +64,7 @@ type Adjudicator interface {
 	Orders() map[Province]Order
 	Units() map[Province]Unit
 	Dislodgeds() map[Province]Unit
+	SupplyCenters() map[Province]Nation
 	SetOrder(Province, Order)
 	Resolve(Province) error
 	Next() (Adjudicator, error)

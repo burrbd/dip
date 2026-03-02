@@ -40,8 +40,9 @@ func (m *mockChannel) History(_ string) ([]string, error) {
 	return m.msgs, nil
 }
 
-func (m *mockChannel) SendDM(_, _ string) error            { return nil }
+func (m *mockChannel) SendDM(_, _ string) error             { return nil }
 func (m *mockChannel) DMHistory(_ string) ([]string, error) { return nil, nil }
+func (m *mockChannel) PostImage(_ string, _ []byte) error   { return nil }
 
 func (m *mockChannel) msgCount() int {
 	m.mu.Lock()
@@ -96,6 +97,8 @@ func (e *mockEngine) SoloWinner() string                        { return e.soloW
 func (e *mockEngine) Dump() ([]byte, error)                     { return e.dumpData, e.dumpErr }
 func (e *mockEngine) Phase() string                             { return e.phaseStr }
 func (e *mockEngine) Dislodgeds() map[string]string             { return make(map[string]string) }
+func (e *mockEngine) SupplyCenters() map[string]int             { return make(map[string]int) }
+func (e *mockEngine) Units() map[string]engine.UnitInfo         { return make(map[string]engine.UnitInfo) }
 
 // ---- helpers ----------------------------------------------------------------
 

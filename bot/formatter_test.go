@@ -55,7 +55,7 @@ func TestFormatResult_EmptyOrders(t *testing.T) {
 }
 
 func TestFormatStatus_IncludesPhase(t *testing.T) {
-	out := FormatStatus("Spring 1901 Movement", map[string]string{"u1": "England"}, map[string]bool{})
+	out := FormatStatus("Spring 1901 Movement", map[string]string{"u1": "England"}, map[string]bool{}, map[string]int{})
 	if !strings.Contains(out, "Spring 1901 Movement") {
 		t.Errorf("expected phase in output, got: %q", out)
 	}
@@ -64,7 +64,7 @@ func TestFormatStatus_IncludesPhase(t *testing.T) {
 func TestFormatStatus_IncludesNationAndSubmitted(t *testing.T) {
 	players := map[string]string{"u1": "England", "u2": "France"}
 	submitted := map[string]bool{"England": true}
-	out := FormatStatus("Spring 1901 Movement", players, submitted)
+	out := FormatStatus("Spring 1901 Movement", players, submitted, map[string]int{"England": 3, "France": 2})
 	if !strings.Contains(out, "England") {
 		t.Errorf("expected England in output, got: %q", out)
 	}
@@ -79,8 +79,16 @@ func TestFormatStatus_IncludesNationAndSubmitted(t *testing.T) {
 	}
 }
 
+func TestFormatStatus_IncludesSCCounts(t *testing.T) {
+	players := map[string]string{"u1": "England"}
+	out := FormatStatus("Spring 1901 Movement", players, map[string]bool{}, map[string]int{"England": 5})
+	if !strings.Contains(out, "5") {
+		t.Errorf("expected SC count 5 in output, got: %q", out)
+	}
+}
+
 func TestFormatStatus_EmptyPlayers(t *testing.T) {
 	is := is.New(t)
-	out := FormatStatus("Spring 1901 Movement", map[string]string{}, map[string]bool{})
+	out := FormatStatus("Spring 1901 Movement", map[string]string{}, map[string]bool{}, map[string]int{})
 	is.NotNil(out)
 }

@@ -1,0 +1,5 @@
+# Compiled test binaries
+*.test
+
+# Build output
+/bin/

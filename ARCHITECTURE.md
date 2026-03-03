@@ -62,18 +62,22 @@ engine package at `game/`.
 ## Channel interface
 
 Defined in `events/log.go`. Platform adapters (Slack, Telegram, WhatsApp) must implement
-all four methods.
+all six methods.
 
 ```
-Post(channelID, text string) error          — post message to group channel
-History(channelID string) ([]string, error) — read group channel message history
-SendDM(userID, text string) error           — send private message to a player
-DMHistory(userID string) ([]string, error)  — read a player's DM thread history
+Post(channelID, text string) error            — post message to group channel
+History(channelID string) ([]string, error)   — read group channel message history
+SendDM(userID, text string) error             — send private text message to a player
+DMHistory(userID string) ([]string, error)    — read a player's DM thread history
+PostImage(channelID string, img []byte) error — post PNG image to group channel
+SendDMImage(userID string, img []byte) error  — send PNG image to a player's private thread
 ```
 
-`Post` / `History` operate on the shared game channel. `SendDM` / `DMHistory` operate on
-private per-player threads. Order submission uses `SendDM`/`DMHistory` so that staged orders
-are never visible to other players in the game channel.
+`Post` / `History` / `PostImage` operate on the shared game channel.
+`SendDM` / `DMHistory` / `SendDMImage` operate on private per-player threads.
+Order submission uses `SendDM`/`DMHistory` so staged orders are never visible to other players.
+`/map` called from the group channel uses `PostImage`; `/map` called from a DM uses `SendDMImage`
+so the player can privately inspect province neighbourhoods without revealing their interest to opponents.
 
 ---
 
@@ -207,7 +211,9 @@ See CLAUDE.md for the full format table.
 | GM | `/replace <nation> <user>` | Any | GM |
 
 `/map Vienna 1` shows Vienna and all adjacent territories; `/map Vienna 2` extends one hop
-further. Implemented via BFS over godip's `Graph.Edges()` to radius `n`.
+further. Implemented via BFS over godip's `Graph.Edges()` to radius `n`. Response is posted
+via `PostImage` when invoked from the group channel, or `SendDMImage` when invoked from a
+private DM — so players can privately scout a region without exposing their interest to opponents.
 
 ---
 

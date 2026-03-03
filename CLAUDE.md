@@ -72,6 +72,69 @@ CI runs this same command via CircleCI (`.circleci/config.yml`).
 - Mock interfaces inline in test files
 - Table-driven tests for parsers and validators
 
+### Command functional tests
+
+**Every bot command that accepts arguments requires a functional test in `bot/bot_functional_test.go`.**
+Commands with no arguments should also have a functional test if they have observable side effects
+(e.g. `/pause`, `/concede`). The goal is end-to-end confidence that the command is wired up,
+access-controlled, and produces the expected event — without mocking the bot or engine internals.
+
+**How they work:**
+
+1. Build tag `//go:build functional` keeps them out of the standard `go test ./...` run.
+   Run explicitly with `go test -v -tags functional ./bot/`.
+2. `startedGame(t)` is the shared helper that spins up a fresh `memChannel` + `Dispatcher`,
+   runs `/newgame`, `/join England` (u1), `/join France` (u2), `/start` (gm), and returns the
+   dispatcher and channel. Use it whenever the test needs an in-progress 2-nation game.
+   For phase-specific helpers (`retreatPhaseGame`, `adjustmentPhaseGame`) see Story 6a and
+   the checklist item below.
+3. `memChannel` is the in-memory `events.Channel` implementation (msgs, dms, imgs slices).
+   `events.Scan` / `events.ScanDM` work correctly against it — no mocking.
+4. Call `d.Dispatch(chanCmd(...))` or `d.Dispatch(dmCmd(...))` to invoke the command and assert
+   on the response string and/or events written to `memChannel`.
+
+**Checklist when adding a new command:**
+
+- [ ] Add `TestCommand_<Name>` to `bot/bot_functional_test.go`
+- [ ] If the command requires arguments, verify the response references the argument (province,
+      nation, duration, etc.)
+- [ ] If the command writes an event, assert `hasEvent(t, ch, channelID, events.Type...)` and
+      unmarshal the payload to check key fields
+- [ ] If the command is GM-only or nation-only, add a second sub-test asserting that an
+      unauthorized caller receives `err != nil`
+- [ ] If the command is phase-restricted, use a phase-specific helper (`retreatPhaseGame`,
+      `adjustmentPhaseGame`) to reach the correct phase and test the happy path. A phase-guard
+      rejection test (calling the command in the wrong phase) is acceptable as *additional*
+      negative-path coverage but is not a substitute for a happy-path test.
+
+**All 24 commands in ARCHITECTURE.md have functional tests as of Story 9.** The mapping is:
+
+| Command | Test function(s) |
+|---|---|
+| `/newgame` | `TestCommand_Newgame` |
+| `/join` | `TestCommand_Join`, `TestCommand_Join_RejectedIfNationTaken` |
+| `/start` | `TestCommand_Start`, `TestCommand_Start_RejectedByNonGM` |
+| `/order` | `TestCommand_Order`, `TestCommand_Order_RejectedForWrongNation` |
+| `/orders` | `TestCommand_Orders` |
+| `/clear` | `TestCommand_Clear` |
+| `/submit` | `TestCommand_Submit_PartialDoesNotAdvance`, `TestCommand_Submit_AllPlayersAdvancesPhase` |
+| `/retreat` | `TestCommand_Retreat_RejectedOutsideRetreatPhase` (phase guard placeholder — Story 6a adds happy-path) |
+| `/disband` | `TestCommand_Disband_RejectedOutsideRetreatAndAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
+| `/build` | `TestCommand_Build_RejectedOutsideAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
+| `/waive` | `TestCommand_Waive_RejectedOutsideAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
+| `/status` | `TestCommand_Status` |
+| `/history` | `TestCommand_History_BeforeFirstResolution` |
+| `/map` | `TestCommand_Map_NoArgs`, `TestCommand_Map_WithTerritoryAndRadius` |
+| `/help` | `TestCommand_Help_NoArgs`, `TestCommand_Help_WithCommand` |
+| `/draw` | `TestCommand_Draw_ProposesOnFirstCall`, `TestCommand_Draw_AllNationsEndGame` |
+| `/concede` | `TestCommand_Concede` |
+| `/pause` | `TestCommand_Pause` |
+| `/resume` | `TestCommand_Resume` |
+| `/extend` | `TestCommand_Extend` |
+| `/force-resolve` | `TestCommand_ForceResolve` |
+| `/boot` | `TestCommand_Boot` |
+| `/replace` | `TestCommand_Replace` |
+
 ---
 
 ## Package Conventions
@@ -105,17 +168,14 @@ Key dependencies:
 
 **godip v0.6.5 is now vendored.** `vendor/github.com/zond/godip/` contains the real library source. The previous minimal stub has been replaced.
 
-### godip API — what changed from the stub
+### godip API summary
 
-The original stub modelled `godip.Adjudicator` as the game-state object (with `Phase()`, `Units()`, `Next() (Adjudicator, error)`, etc.). In **real godip v0.6.5** the types are:
-
-| Concept | Stub (old) | Real godip v0.6.5 |
-|---|---|---|
-| Game state | `godip.Adjudicator` | `*state.State` |
-| Per-province order | `godip.Order` | `godip.Adjudicator` |
-| Phase advance | `Next() (Adjudicator, error)` | `(*state.State).Next() error` (in-place) |
-| Serialization | `Load([]byte) (Adjudicator, error)` | No built-in JSON; 6 raw maps via `Units()`, etc. |
-| Order parser | `classical.Parser.Parse([]string)` | `classical.DATCOrder(text)` (regex, returns province + `godip.Adjudicator`) |
+In **real godip v0.6.5**:
+- Game state is `*state.State` (not `godip.Adjudicator`)
+- A per-province order is `godip.Adjudicator` (the interface name is confusingly overloaded)
+- Phase advance is `(*state.State).Next() error` — mutates in-place, no return value
+- No built-in JSON serialisation; `engine` owns its own `stateSnapshot` struct
+- Order parsing: `classical.DATCOrder(text)` returns `(province, godip.Adjudicator, error)`
 
 ### engine/ internal interface shim
 
@@ -148,10 +208,6 @@ type gameState interface {
 
 `stateWrapper` (wraps `*state.State` + `common.Variant`) and `phaseWrapper` (wraps `godip.Phase`) are the production implementations. Test files use `mockAdj`/`mockPhase` that satisfy the same interfaces without touching real godip.
 
-### Known stubs still in engine/
-
-- **`buildStateFromSnapshot` error paths** — `SetUnits` and `SetDislodgeds` rarely return errors in practice; these branches exist for safety but are not reachable in normal test scenarios (engine coverage sits at ~98%).
-
 ### classical.DATCOrder — text format reference
 
 `classical.DATCOrder(text string) (godip.Province, godip.Adjudicator, error)` in
@@ -182,11 +238,10 @@ double `Next()` call, the `game` struct carries an `advanced bool` flag: `Resolv
 it; `Advance()` skips the main `Next()` call when `advanced=true` and only handles
 empty-phase skipping.
 
----
+### White-box testing
 
-## Testing Conventions (additions)
+Tests that need access to unexported helpers (e.g. `fillNMR`, `isEmptyPhase`, `newFromVariant`) use `package engine` (not `package engine_test`) so they share the package namespace.
 
-- Tests that need access to unexported helpers (e.g. `fillNMR`, `isEmptyPhase`, `newFromVariant`) use `package engine` (not `package engine_test`) so they share the package namespace. This is the standard Go pattern for white-box testing.
 - 100% coverage means **all branches**, not just all lines — use `go tool cover -func` to check per-function coverage when the summary isn't 100%.
 
 ### Timer tests and the race detector
@@ -248,14 +303,7 @@ examples of this pattern applied throughout the engine package.
 
 ---
 
-## Legacy: Custom Adjudicator
+## Legacy
 
-> **Preserved but not the active development path.** Adjudication has been outsourced to godip.
-> The `game/` package is kept for reference.
-
-The `game/` package implements a partial custom Diplomacy adjudicator based on the DATC
-(Diplomacy Adjudicator Test Cases). A local copy of the DATC is at `DATC.txt`.
-
-Phase 1 (army resolution — DATC 6.A.11, 6.A.12, 6.C.1–6.C.3, 6.D.1–6.D.5 and others) is
-done or in progress. Phases 2–5 (self-dislodgement, head-to-head, fleet model, convoys) are
-not planned.
+The `game/` package is a partial custom adjudicator that predates godip integration. It is
+preserved for reference only — do not extend it.

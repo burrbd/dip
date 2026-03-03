@@ -30,9 +30,10 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 7 — Info Commands
 - [ ] Story 8 — Draw & GM Commands
 - [ ] Story 9 — Map Rendering
-- [ ] Story 10 — Slack Platform Adapter
-- [ ] Story 11 — Telegram Platform Adapter
-- [ ] Story 12 — Lambda / EventBridge Deployment
+- [ ] Story 10 — Telegram Platform Adapter
+- [ ] Story 11 — Slack Platform Adapter
+- [ ] Story 12 — WhatsApp Platform Adapter (optional)
+- [ ] Story 13 — Lambda / EventBridge Deployment
 
 ---
 
@@ -112,11 +113,11 @@ adjudicated, and make `Resolve()` report accurate success/failure after advancin
 - Deadline timer fires `AdvanceTurn()` automatically when it expires
 - Unit tests cover timer cancellation and state transitions
 
-> **Note (refactor pending — Story 12):** The current implementation uses `timer *time.Timer` +
+> **Note (refactor pending — Story 13):** The current implementation uses `timer *time.Timer` +
 > `sync.Mutex`. Before Story 10, this must be refactored to a `Scheduler` interface
 > (`LocalScheduler` / `EventBridgeScheduler`) as described in ARCHITECTURE.md. `AdvanceTurn()`
 > must also gain an idempotency check (no-op if `PhaseResolved` already exists for the current
-> phase). These changes are tracked in Story 12.
+> phase). These changes are tracked in Story 13.
 
 ---
 
@@ -234,7 +235,29 @@ adjudicated, and make `Resolve()` report accurate success/failure after advancin
 
 ---
 
-### Story 10 — Slack Platform Adapter
+### Story 10 — Telegram Platform Adapter
+
+**Goal:** Deploy the bot as a Telegram bot.
+
+**Files:** `platform/telegram/adapter.go`, `platform/telegram/store.go`, `cmd/telegrambot/main.go`
+
+**Acceptance criteria:**
+- Handles Telegram Bot API webhook updates; parses `/command` messages into `bot.Command` values
+- Posts text responses and PNG images back to Telegram chats via Bot API
+- Implements all five `events.Channel` methods on the Telegram adapter:
+  - `Post` / `History` — group chat messages; history backed by local JSONL file store
+    (Telegram Bot API does not expose historical messages)
+  - `SendDM` / `DMHistory` — private chat messages; history backed by local JSONL file store
+  - `PostImage` — sends PNG to group chat via `sendPhoto`
+- Handles private chat (`chat.type = "private"`) update payloads and routes them to the order handler
+- `cmd/telegrambot/main.go` reads `TELEGRAM_BOT_TOKEN`, `DATA_DIR`, `PORT` from env; wires up
+  HTTP server, webhook registration, and `bot.Dispatch`
+- Unit tests cover all Channel methods using a mock Telegram API server
+- `go test -v -cover -race ./...` passes
+
+---
+
+### Story 11 — Slack Platform Adapter
 
 **Goal:** Deploy the bot as a Slack app.
 
@@ -244,28 +267,40 @@ adjudicated, and make `Resolve()` report accurate success/failure after advancin
 - Handles Slack slash command HTTP requests; parses into `bot.Command` values
 - Handles Slack Events API payloads (URL verification, event dispatch)
 - Posts text responses and PNG images back to Slack channels
-- Implements `SendDM(userID, text)` and `DMHistory(userID)` on the Slack `Channel` adapter
+- Implements all five `events.Channel` methods on the Slack adapter:
+  - `Post` / `History` — Slack reads history via `conversations.history` API (no local store needed)
+  - `SendDM` / `DMHistory` — Slack DM channel; history via `conversations.history` API
+  - `PostImage` — uploads PNG via `files.upload`
 - Handles DM slash-command payloads (`channel_type = "im"`) and routes them to the order handler
 - `cmd/slackbot/main.go` wires up HTTP server, Slack signing-secret verification, and `bot.Dispatch`
+- Unit tests cover all Channel methods and webhook parsing
+- `go test -v -cover -race ./...` passes
 
 ---
 
-### Story 11 — Telegram Platform Adapter
+### Story 12 — WhatsApp Platform Adapter (optional)
 
-**Goal:** Deploy the bot as a Telegram bot.
+**Goal:** Deploy the bot via the Twilio WhatsApp API or Meta Cloud API.
 
-**Files:** `platform/telegram/adapter.go`, `cmd/telegrambot/main.go`
+**Note:** WhatsApp requires a Meta Business Account (approval can take days/weeks) and has
+per-conversation charges. Tackle only if Telegram/Slack do not meet deployment needs.
+
+**Files:** `platform/whatsapp/adapter.go`, `platform/whatsapp/store.go`, `cmd/whatsappbot/main.go`
 
 **Acceptance criteria:**
-- Handles Telegram Bot API webhook updates; parses `/command` messages into `bot.Command` values
-- Posts text responses and PNG images back to Telegram chats via Bot API
-- Implements `SendDM(userID, text)` and `DMHistory(userID)` on the Telegram `Channel` adapter
-- Handles private chat (`chat.type = "private"`) update payloads and routes them to the order handler
-- `cmd/telegrambot/main.go` wires up HTTP server and `bot.Dispatch`
+- `WhatsAppChannel` implements `events.Channel`:
+  - `Post` / `History` — group messages sent via Twilio API; history backed by local JSONL file store
+  - `SendDM` / `DMHistory` — 1:1 messages sent via Twilio API; history backed by local JSONL file store
+  - `PostImage` — uploads PNG to Twilio Media API, posts MMS link to group
+- Webhook handler validates `X-Twilio-Signature` and parses `application/x-www-form-urlencoded` payloads
+- `cmd/whatsappbot/main.go` reads `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
+  `TWILIO_WHATSAPP_NUMBER`, `DATA_DIR`, `PORT` from env
+- Unit tests cover all Channel methods using a mock Twilio API server
+- `go test -v -cover -race ./...` passes
 
 ---
 
-### Story 12 — Lambda / EventBridge Deployment
+### Story 13 — Lambda / EventBridge Deployment
 
 **Goal:** Refactor session scheduling to a `Scheduler` interface and wire up a Lambda entry
 point so the bot runs as a stateless FaaS application with externally managed phase deadlines.

@@ -31,7 +31,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 7 — Info Commands
 - [x] Story 8 — Draw & GM Commands
 - [x] Story 9 — Map Rendering
-- [ ] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
+- [x] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)

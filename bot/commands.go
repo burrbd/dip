@@ -43,26 +43,30 @@ type EngineFactory func(variant string) (engine.Engine, error)
 
 // Dispatcher routes commands to their handlers and holds in-process sessions.
 type Dispatcher struct {
-	ch          events.Channel
-	notifier    session.Notifier
-	loader      session.EngineLoader
-	newEng      EngineFactory
-	sessions    map[string]*session.Session
-	graph       dipmap.Graph                              // optional board graph for /map neighbourhood queries
-	renderFn    func(dipmap.EngineState) ([]byte, error) // defaults to dipmap.Render
-	highlightFn func([]byte, []string) ([]byte, error)   // defaults to dipmap.Highlight
+	ch              events.Channel
+	notifier        session.Notifier
+	loader          session.EngineLoader
+	newEng          EngineFactory
+	sessions        map[string]*session.Session
+	graph           dipmap.Graph                                               // optional board graph for /map neighbourhood queries
+	renderFn        func(dipmap.EngineState) ([]byte, error)                  // defaults to dipmap.Render (full-board PNG)
+	svgFn           func(dipmap.EngineState) ([]byte, error)                  // defaults to dipmap.LoadSVG (raw SVG bytes)
+	highlightFn     func([]byte, []string) ([]byte, error)                    // defaults to dipmap.Highlight
+	renderZoomedFn  func(dipmap.EngineState, []byte, []string) ([]byte, error) // defaults to dipmap.RenderZoomed
 }
 
 // New returns a Dispatcher wired to the given dependencies.
 func New(ch events.Channel, notifier session.Notifier, loader session.EngineLoader, newEng EngineFactory) *Dispatcher {
 	return &Dispatcher{
-		ch:          ch,
-		notifier:    notifier,
-		loader:      loader,
-		newEng:      newEng,
-		sessions:    make(map[string]*session.Session),
-		renderFn:    dipmap.Render,
-		highlightFn: dipmap.Highlight,
+		ch:             ch,
+		notifier:       notifier,
+		loader:         loader,
+		newEng:         newEng,
+		sessions:       make(map[string]*session.Session),
+		renderFn:       dipmap.Render,
+		svgFn:          dipmap.LoadSVG,
+		highlightFn:    dipmap.Highlight,
+		renderZoomedFn: dipmap.RenderZoomed,
 	}
 }
 
@@ -622,41 +626,54 @@ func (d *Dispatcher) boardGraph() dipmap.Graph {
 }
 
 // handleMap processes /map [territory [n]] — renders the board and posts it
-// as an image. With a territory argument, highlights the territory and all
-// provinces within n hops (default 0).
+// as an image. With territory and n > 0, highlights the neighbourhood and
+// returns a zoomed crop. With no territory or n == 0, returns the full board.
 func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 	sess, ok := d.sessions[cmd.ChannelID]
 	if !ok || sess == nil {
 		return "", fmt.Errorf("bot: no active game found in this channel")
 	}
 
-	var png []byte
-	var renderErr error
-
-	if len(cmd.Args) == 0 {
-		png, renderErr = d.renderFn(sess.Eng)
-	} else {
-		territory := cmd.Args[0]
-		n := 0
-		if len(cmd.Args) >= 2 {
-			parsed, err := strconv.Atoi(cmd.Args[1])
-			if err != nil {
-				return "", fmt.Errorf("bot: invalid radius %q: must be an integer", cmd.Args[1])
-			}
-			n = parsed
+	territory := ""
+	if len(cmd.Args) >= 1 {
+		territory = cmd.Args[0]
+	}
+	n := 0
+	if len(cmd.Args) >= 2 {
+		parsed, err := strconv.Atoi(cmd.Args[1])
+		if err != nil {
+			return "", fmt.Errorf("bot: invalid radius %q: must be an integer", cmd.Args[1])
 		}
+		n = parsed
+	}
+
+	var img []byte
+	if territory != "" && n > 0 {
+		// Zoomed path: load SVG → highlight neighbourhood → render zoomed PNG.
 		provinces := dipmap.Neighborhood(d.boardGraph(), territory, n)
-		svg, err := d.renderFn(sess.Eng)
+		svg, err := d.svgFn(sess.Eng)
 		if err != nil {
 			return "", fmt.Errorf("bot: render map: %w", err)
 		}
-		png, renderErr = d.highlightFn(svg, provinces)
+		highlighted, err := d.highlightFn(svg, provinces)
+		if err != nil {
+			return "", fmt.Errorf("bot: render map: %w", err)
+		}
+		var err2 error
+		img, err2 = d.renderZoomedFn(sess.Eng, highlighted, provinces)
+		if err2 != nil {
+			return "", fmt.Errorf("bot: render map: %w", err2)
+		}
+	} else {
+		// Full-board path: render the whole map as PNG.
+		var err error
+		img, err = d.renderFn(sess.Eng)
+		if err != nil {
+			return "", fmt.Errorf("bot: render map: %w", err)
+		}
 	}
 
-	if renderErr != nil {
-		return "", fmt.Errorf("bot: render map: %w", renderErr)
-	}
-	if err := d.ch.PostImage(cmd.ChannelID, png); err != nil {
+	if err := d.ch.PostImage(cmd.ChannelID, img); err != nil {
 		return "", fmt.Errorf("bot: post map: %w", err)
 	}
 	return "Map posted.", nil

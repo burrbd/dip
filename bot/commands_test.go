@@ -1613,13 +1613,28 @@ func TestDispatchMap_RejectsHighlightError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestDispatchMap_RejectsRenderErrorInTerritoryPath(t *testing.T) {
+func TestDispatchMap_RejectsSVGLoadErrorInTerritoryPath(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 	makeDMSession(d, ch, "chan1")
-	d.renderFn = func(_ dipmap.EngineState) ([]byte, error) {
-		return nil, errors.New("render failed")
+	// SVG load fails in the territory+zoom path (n > 0).
+	d.svgFn = func(_ dipmap.EngineState) ([]byte, error) {
+		return nil, errors.New("svg load failed")
+	}
+
+	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_RejectsZoomError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	// SVG load and highlight succeed; zoom render fails.
+	d.renderZoomedFn = func(_ dipmap.EngineState, _ []byte, _ []string) ([]byte, error) {
+		return nil, errors.New("zoom failed")
 	}
 
 	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})

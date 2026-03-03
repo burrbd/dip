@@ -3,22 +3,43 @@
 // a target territory to radius n (BFS over godip's Graph.Edges()).
 package dipmap
 
+import (
+	"bytes"
+	"fmt"
+	"os/exec"
+
+	"github.com/zond/godip/variants/classical"
+)
+
 // EngineState is the minimal engine interface needed for map rendering.
 // engine.Engine satisfies this interface.
 type EngineState interface {
 	Dump() ([]byte, error)
 }
 
-// Render converts the current board state to a PNG byte slice.
-// The stub implementation returns empty bytes; Story 9 replaces this with
-// real SVG-to-PNG rendering using godip's SVG assets.
-func Render(_ EngineState) ([]byte, error) {
-	return []byte{}, nil
+// Render converts godip's classical SVG map to a PNG byte slice using
+// rsvg-convert. The state parameter is available for future unit-overlay
+// rendering; the current implementation renders the base map only.
+func Render(state EngineState) ([]byte, error) {
+	return renderWithLoader(state, classical.Asset)
 }
 
-// Highlight overlays province highlighting on an SVG byte slice.
-// The stub returns the input unchanged; Story 9 replaces this with
-// actual province-colouring logic.
-func Highlight(svg []byte, _ []string) ([]byte, error) {
-	return svg, nil
+// renderWithLoader is the testable core of Render with an injectable asset loader.
+func renderWithLoader(_ EngineState, assetFn func(string) ([]byte, error)) ([]byte, error) {
+	svg, err := assetFn("svg/map.svg")
+	if err != nil {
+		return nil, fmt.Errorf("dipmap: load SVG asset: %w", err)
+	}
+	return svgToPNG(svg)
+}
+
+// svgToPNG converts SVG bytes to PNG by piping through rsvg-convert.
+func svgToPNG(svg []byte) ([]byte, error) {
+	cmd := exec.Command("rsvg-convert", "--format=png")
+	cmd.Stdin = bytes.NewReader(svg)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("dipmap: rsvg-convert: %w", err)
+	}
+	return out, nil
 }

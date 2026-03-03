@@ -29,7 +29,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 6 — Retreat & Adjustment Commands
 - [x] Story 7 — Info Commands
 - [x] Story 8 — Draw & GM Commands
-- [ ] Story 9 — Map Rendering
+- [x] Story 9 — Map Rendering
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)

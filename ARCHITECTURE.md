@@ -62,13 +62,14 @@ engine package at `game/`.
 ## Channel interface
 
 Defined in `events/log.go`. Platform adapters (Slack, Telegram, WhatsApp) must implement
-all four methods.
+all five methods.
 
 ```
 Post(channelID, text string) error          — post message to group channel
 History(channelID string) ([]string, error) — read group channel message history
 SendDM(userID, text string) error           — send private message to a player
 DMHistory(userID string) ([]string, error)  — read a player's DM thread history
+PostImage(channelID string, img []byte) error — post PNG image to group channel
 ```
 
 `Post` / `History` operate on the shared game channel. `SendDM` / `DMHistory` operate on

@@ -197,25 +197,33 @@ adjudicated, and make `Resolve()` report accurate success/failure after advancin
 **New helpers:**
 
 `retreatPhaseGame(t)` — spins up a full 7-nation game, submits Spring 1901 orders that cause a
-dislodgement (Austria `A Vie-Tri` + `A Bud S A Vie-Tri`, all others hold), and force-resolves.
-Returns a dispatcher in Spring 1901 Retreat phase with Italy's `F Tri` dislodged.
+dislodgement (Italy `A Ven-Tri` + `A Rom S A Ven-Tri`, all others hold), and force-resolves.
+Returns a dispatcher in Spring 1901 Retreat phase with Austria's `F Tri` dislodged.
+
+Classical starting positions relevant to this scenario:
+- Austria: A Vie, A Bud, **F Tri** (the unit that gets dislodged)
+- Italy: **A Ven**, **A Rom**, F Nap (A Ven attacks Tri, A Rom supports)
+- Tri's neighbours: Ven, Tyr, Vie, Adr, Alb — F Tri may retreat to any unoccupied one
+  (Ven is vacated when A Ven moves out; Vie has Austria's A Vie so is blocked)
+- Safe retreat choice for tests: `Ven` (vacant after Italy's move) or `Adr`
 
 `adjustmentPhaseGame(t)` — spins up a full 7-nation game, submits `F Lon-NTH` for England in
-Spring 1901 (all others hold), force-resolves through Spring, submits `F NTH-NOR` in Fall 1901
-(all others hold), and force-resolves through Fall. Returns a dispatcher in Winter 1901
-Adjustment phase with England owning Norway (+1 SC, needs to build).
+Spring 1901 (all others hold), force-resolves through Spring (no dislodgements → Spring Retreat
+skipped), submits `F NTH-NOR` in Fall 1901 (all others hold), and force-resolves through Fall.
+Returns a dispatcher in Winter 1901 Adjustment phase with England owning Norway (+1 SC → 4 SCs,
+3 units → 1 build slot available).
 
 **Acceptance criteria:**
 - `retreatPhaseGame(t)` and `adjustmentPhaseGame(t)` helpers exist and produce a dispatcher in
   the correct phase (verified by reading the current phase from the rebuilt session)
-- `TestCommand_Retreat` — happy path: Italy submits `/retreat F Tri Adr` (or another valid
-  destination); no error returned; an `OrderSubmitted` event is recorded for Italy
-- `TestCommand_Disband_InRetreatPhase` — happy path: Italy submits `/disband F Tri`; no error;
+- `TestCommand_Retreat` — happy path: Austria submits `/retreat F Tri Ven`; no error returned;
+  an `OrderSubmitted` event is recorded for Austria
+- `TestCommand_Disband_InRetreatPhase` — happy path: Austria submits `/disband F Tri`; no error;
   `OrderSubmitted` event recorded
 - `TestCommand_Build` — happy path: England submits `/build F Lon`; no error; `OrderSubmitted`
   event recorded
-- `TestCommand_Waive` — happy path: France submits `/waive` (no build needed, so just confirm
-  no error and the order is staged); or pick a nation that needs to waive
+- `TestCommand_Waive` — happy path: England submits `/waive` (has 1 available build slot from
+  Norway, chooses to waive it); no error; order staged
 - Existing phase-guard tests (`TestCommand_Retreat_RejectedOutsideRetreatPhase`, etc.) are
   kept alongside the new happy-path tests — they remain valid as negative-path coverage
 - `go test -v -tags functional ./bot/` passes

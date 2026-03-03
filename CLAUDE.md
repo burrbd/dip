@@ -85,14 +85,13 @@ access-controlled, and produces the expected event — without mocking the bot o
    Run explicitly with `go test -v -tags functional ./bot/`.
 2. `startedGame(t)` is the shared helper that spins up a fresh `memChannel` + `Dispatcher`,
    runs `/newgame`, `/join England` (u1), `/join France` (u2), `/start` (gm), and returns the
-   dispatcher and channel. Use it whenever the test needs an in-progress game.
+   dispatcher and channel. Use it whenever the test needs an in-progress 2-nation game.
+   For phase-specific helpers (`retreatPhaseGame`, `adjustmentPhaseGame`) see Story 6a and
+   the checklist item below.
 3. `memChannel` is the in-memory `events.Channel` implementation (msgs, dms, imgs slices).
    `events.Scan` / `events.ScanDM` work correctly against it — no mocking.
 4. Call `d.Dispatch(chanCmd(...))` or `d.Dispatch(dmCmd(...))` to invoke the command and assert
    on the response string and/or events written to `memChannel`.
-5. Commands that are only valid in Retreat or Adjustment phase (unreachable from a fresh Spring
-   1901 game) must test the **phase-guard rejection path**: call the command in Movement phase and
-   assert `err != nil`. This proves the command is wired and correctly access-controlled.
 
 **Checklist when adding a new command:**
 
@@ -169,17 +168,14 @@ Key dependencies:
 
 **godip v0.6.5 is now vendored.** `vendor/github.com/zond/godip/` contains the real library source. The previous minimal stub has been replaced.
 
-### godip API — what changed from the stub
+### godip API summary
 
-The original stub modelled `godip.Adjudicator` as the game-state object (with `Phase()`, `Units()`, `Next() (Adjudicator, error)`, etc.). In **real godip v0.6.5** the types are:
-
-| Concept | Stub (old) | Real godip v0.6.5 |
-|---|---|---|
-| Game state | `godip.Adjudicator` | `*state.State` |
-| Per-province order | `godip.Order` | `godip.Adjudicator` |
-| Phase advance | `Next() (Adjudicator, error)` | `(*state.State).Next() error` (in-place) |
-| Serialization | `Load([]byte) (Adjudicator, error)` | No built-in JSON; 6 raw maps via `Units()`, etc. |
-| Order parser | `classical.Parser.Parse([]string)` | `classical.DATCOrder(text)` (regex, returns province + `godip.Adjudicator`) |
+In **real godip v0.6.5**:
+- Game state is `*state.State` (not `godip.Adjudicator`)
+- A per-province order is `godip.Adjudicator` (the interface name is confusingly overloaded)
+- Phase advance is `(*state.State).Next() error` — mutates in-place, no return value
+- No built-in JSON serialisation; `engine` owns its own `stateSnapshot` struct
+- Order parsing: `classical.DATCOrder(text)` returns `(province, godip.Adjudicator, error)`
 
 ### engine/ internal interface shim
 
@@ -212,10 +208,6 @@ type gameState interface {
 
 `stateWrapper` (wraps `*state.State` + `common.Variant`) and `phaseWrapper` (wraps `godip.Phase`) are the production implementations. Test files use `mockAdj`/`mockPhase` that satisfy the same interfaces without touching real godip.
 
-### Known stubs still in engine/
-
-- **`buildStateFromSnapshot` error paths** — `SetUnits` and `SetDislodgeds` rarely return errors in practice; these branches exist for safety but are not reachable in normal test scenarios (engine coverage sits at ~98%).
-
 ### classical.DATCOrder — text format reference
 
 `classical.DATCOrder(text string) (godip.Province, godip.Adjudicator, error)` in
@@ -246,11 +238,10 @@ double `Next()` call, the `game` struct carries an `advanced bool` flag: `Resolv
 it; `Advance()` skips the main `Next()` call when `advanced=true` and only handles
 empty-phase skipping.
 
----
+### White-box testing
 
-## Testing Conventions (additions)
+Tests that need access to unexported helpers (e.g. `fillNMR`, `isEmptyPhase`, `newFromVariant`) use `package engine` (not `package engine_test`) so they share the package namespace.
 
-- Tests that need access to unexported helpers (e.g. `fillNMR`, `isEmptyPhase`, `newFromVariant`) use `package engine` (not `package engine_test`) so they share the package namespace. This is the standard Go pattern for white-box testing.
 - 100% coverage means **all branches**, not just all lines — use `go tool cover -func` to check per-function coverage when the summary isn't 100%.
 
 ### Timer tests and the race detector
@@ -312,14 +303,7 @@ examples of this pattern applied throughout the engine package.
 
 ---
 
-## Legacy: Custom Adjudicator
+## Legacy
 
-> **Preserved but not the active development path.** Adjudication has been outsourced to godip.
-> The `game/` package is kept for reference.
-
-The `game/` package implements a partial custom Diplomacy adjudicator based on the DATC
-(Diplomacy Adjudicator Test Cases). A local copy of the DATC is at `DATC.txt`.
-
-Phase 1 (army resolution — DATC 6.A.11, 6.A.12, 6.C.1–6.C.3, 6.D.1–6.D.5 and others) is
-done or in progress. Phases 2–5 (self-dislodgement, head-to-head, fleet model, convoys) are
-not planned.
+The `game/` package is a partial custom adjudicator that predates godip integration. It is
+preserved for reference only — do not extend it.

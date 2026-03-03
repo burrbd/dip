@@ -293,11 +293,12 @@ Returns a dispatcher in Winter 1901 Adjustment phase with England owning Norway 
 **Acceptance criteria:**
 - Handles Telegram Bot API webhook updates; parses `/command` messages into `bot.Command` values
 - Posts text responses and PNG images back to Telegram chats via Bot API
-- Implements all five `events.Channel` methods on the Telegram adapter:
+- Implements all six `events.Channel` methods on the Telegram adapter:
   - `Post` / `History` — group chat messages; history backed by local JSONL file store
     (Telegram Bot API does not expose historical messages)
   - `SendDM` / `DMHistory` — private chat messages; history backed by local JSONL file store
   - `PostImage` — sends PNG to group chat via `sendPhoto`
+  - `SendDMImage` — sends PNG to a player's private chat via `sendPhoto`
 - Handles private chat (`chat.type = "private"`) update payloads and routes them to the order handler
 - `cmd/telegrambot/main.go` reads `TELEGRAM_BOT_TOKEN`, `DATA_DIR`, `PORT` from env; wires up
   HTTP server, webhook registration, and `bot.Dispatch`
@@ -316,10 +317,11 @@ Returns a dispatcher in Winter 1901 Adjustment phase with England owning Norway 
 - Handles Slack slash command HTTP requests; parses into `bot.Command` values
 - Handles Slack Events API payloads (URL verification, event dispatch)
 - Posts text responses and PNG images back to Slack channels
-- Implements all five `events.Channel` methods on the Slack adapter:
+- Implements all six `events.Channel` methods on the Slack adapter:
   - `Post` / `History` — Slack reads history via `conversations.history` API (no local store needed)
   - `SendDM` / `DMHistory` — Slack DM channel; history via `conversations.history` API
-  - `PostImage` — uploads PNG via `files.upload`
+  - `PostImage` — uploads PNG to group channel via `files.upload`
+  - `SendDMImage` — uploads PNG to the player's DM channel via `files.upload`
 - Handles DM slash-command payloads (`channel_type = "im"`) and routes them to the order handler
 - `cmd/slackbot/main.go` wires up HTTP server, Slack signing-secret verification, and `bot.Dispatch`
 - Unit tests cover all Channel methods and webhook parsing
@@ -341,6 +343,7 @@ per-conversation charges. Tackle only if Telegram/Slack do not meet deployment n
   - `Post` / `History` — group messages sent via Twilio API; history backed by local JSONL file store
   - `SendDM` / `DMHistory` — 1:1 messages sent via Twilio API; history backed by local JSONL file store
   - `PostImage` — uploads PNG to Twilio Media API, posts MMS link to group
+  - `SendDMImage` — uploads PNG to Twilio Media API, posts MMS link to player's 1:1 thread
 - Webhook handler validates `X-Twilio-Signature` and parses `application/x-www-form-urlencoded` payloads
 - `cmd/whatsappbot/main.go` reads `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
   `TWILIO_WHATSAPP_NUMBER`, `DATA_DIR`, `PORT` from env

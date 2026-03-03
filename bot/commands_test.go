@@ -15,18 +15,22 @@ import (
 // ---- mock channel -----------------------------------------------------------
 
 type mockChannel struct {
-	msgs      []string
-	dms       map[string][]string
-	imgs      [][]byte
-	postErr   error
-	histErr   error
-	dmPostErr error
-	dmHistErr error
+	msgs         []string
+	dms          map[string][]string
+	imgs         [][]byte
+	postErr      error
+	histErr      error
+	dmPostErr    error
+	dmHistErr    error
+	postErrAfter int // if > 0, Post returns an error after this many successful posts
 }
 
 func (m *mockChannel) Post(_, text string) error {
 	if m.postErr != nil {
 		return m.postErr
+	}
+	if m.postErrAfter > 0 && len(m.msgs) >= m.postErrAfter {
+		return errors.New("post failed")
 	}
 	m.msgs = append(m.msgs, text)
 	return nil
@@ -1711,5 +1715,761 @@ func TestDispatchHelp_RejectsUnknownCommand(t *testing.T) {
 	d := newTestDispatcher(ch)
 
 	_, err := d.Dispatch(Command{Name: "help", Args: []string{"bogus"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+// ---- helpers for draw/concede/GM command tests ------------------------------
+
+// seedStartedGame writes GameCreated, PlayerJoined (for each player in players),
+// and GameStarted events to ch, and registers a session in d.sessions keyed by
+// channelID. DeadlineHours is 0 to prevent background timers during tests.
+// players is a map of userID → nation (same format as session.Session.Players).
+func seedStartedGame(d *Dispatcher, ch *mockChannel, channelID, gmID string, players map[string]string) *session.Session {
+	_ = events.Write(ch, channelID, events.TypeGameCreated, events.GameCreated{
+		Variant: "classical", DeadlineHours: 24, GMUserID: gmID,
+	})
+	for uid, nation := range players {
+		_ = events.Write(ch, channelID, events.TypePlayerJoined, events.PlayerJoined{
+			UserID: uid, Nation: nation,
+		})
+	}
+	_ = events.Write(ch, channelID, events.TypeGameStarted, events.GameStarted{
+		InitialState: json.RawMessage(`{}`),
+	})
+	eng := goodEngine()
+	sess := session.New(ch, channelID, gmID, "Spring 1901 Movement", players, 0, eng, &mockNotifier{})
+	d.sessions[channelID] = sess
+	return sess
+}
+
+// twoPlayerGame seeds a two-player game (u1→England, u2→France) run by gm1.
+func twoPlayerGame(d *Dispatcher, ch *mockChannel) *session.Session {
+	players := map[string]string{"u1": "England", "u2": "France"}
+	return seedStartedGame(d, ch, "chan1", "gm1", players)
+}
+
+// gameCmd builds a non-DM Command for the game channel.
+func gameCmd(name, channelID, userID string, args ...string) Command {
+	return Command{
+		Name:      name,
+		Args:      args,
+		UserID:    userID,
+		ChannelID: channelID,
+	}
+}
+
+// ---- /draw ------------------------------------------------------------------
+
+func TestDispatchDraw_ProposesDraw_PostsDrawProposed(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.NoErr(err)
+	is.Equal(ch.lastEventType(), events.TypeDrawProposed)
+}
+
+func TestDispatchDraw_ProposesDraw_ReturnsNonEmptyMessage(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	resp, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchDraw_VoteYes_PostsDrawVoted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	// Seed an existing draw proposal from England.
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u2")) // France votes yes
+	is.NoErr(err)
+	is.Equal(ch.lastEventType(), events.TypeGameEnded) // both voted → game ended
+}
+
+func TestDispatchDraw_AllNationsAgree_PostsGameEnded(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u2"))
+	is.NoErr(err)
+
+	var env events.Envelope
+	is.NoErr(json.Unmarshal([]byte(ch.msgs[len(ch.msgs)-1]), &env))
+	is.Equal(env.Type, events.TypeGameEnded)
+
+	var ge events.GameEnded
+	is.NoErr(json.Unmarshal(env.Payload, &ge))
+	is.Equal(ge.Result, "draw")
+}
+
+func TestDispatchDraw_PartialVote_ReturnsCountMessage(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	// Three players; England proposes; France votes; Turkey still needs to vote.
+	players := map[string]string{"u1": "England", "u2": "France", "u3": "Turkey"}
+	seedStartedGame(d, ch, "chan1", "gm1", players)
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+
+	resp, err := d.Dispatch(gameCmd("draw", "chan1", "u2")) // France votes
+	is.NoErr(err)
+	if !containsStr(resp, "1") {
+		t.Errorf("expected remaining nation count in response, got: %q", resp)
+	}
+}
+
+func TestDispatchDraw_AlreadyVoted_ReturnsMessage(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	// England proposed and already voted yes.
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+
+	resp, err := d.Dispatch(gameCmd("draw", "chan1", "u1")) // England tries to vote again
+	is.NoErr(err)
+	if !containsStr(resp, "already") {
+		t.Errorf("expected 'already voted' message, got: %q", resp)
+	}
+}
+
+func TestDispatchDraw_RejectsIfGameNotStarted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	seedGameCreated(ch, "gm1")
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchDraw_RejectsIfGameEnded(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	_ = events.Write(ch, "chan1", events.TypeGameEnded, events.GameEnded{Result: "solo", Winner: "England"})
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchDraw_RejectsIfNotPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "outsider"))
+	is.Err(err)
+}
+
+func TestDispatchDraw_RejectsIfChannelFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{histErr: errors.New("channel down")}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchDraw_RejectsIfProposalWriteFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	// The first 3 messages (GameCreated, PlayerJoined×2) were posted during seed;
+	// GameStarted = 4th. Next post (DrawProposed) should fail.
+	ch.postErrAfter = len(ch.msgs)
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchDraw_RejectsIfVoteWriteFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+	// Allow the DrawProposed (already written), but fail on DrawVoted.
+	ch.postErrAfter = len(ch.msgs)
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u2"))
+	is.Err(err)
+}
+
+func TestDispatchDraw_RejectsIfGameEndedWriteFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+	// Allow DrawVoted to succeed (1 more message), but fail on GameEnded.
+	ch.postErrAfter = len(ch.msgs) + 1
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u2"))
+	is.Err(err)
+}
+
+func TestDispatchDraw_SinglePlayerImmediate(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	// Only one nation remains; proposing immediately ends the game.
+	players := map[string]string{"u1": "England"}
+	seedStartedGame(d, ch, "chan1", "gm1", players)
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.NoErr(err)
+	is.Equal(ch.lastEventType(), events.TypeGameEnded)
+}
+
+func TestDispatchDraw_SinglePlayer_GameEndedWriteFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	players := map[string]string{"u1": "England"}
+	seedStartedGame(d, ch, "chan1", "gm1", players)
+	// DrawProposed may succeed (1 more), but GameEnded write must fail.
+	ch.postErrAfter = len(ch.msgs) + 1
+
+	_, err := d.Dispatch(gameCmd("draw", "chan1", "u1"))
+	is.Err(err)
+}
+
+// ---- readState draw/booted/replaced coverage --------------------------------
+
+func TestReadState_TracksDrawVoteYes(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+	_ = events.Write(ch, "chan1", events.TypeDrawVoted, events.DrawVoted{Nation: "France", Accept: true})
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(state.drawVotes["England"], true)
+	is.Equal(state.drawVotes["France"], true)
+}
+
+func TestReadState_TracksDrawVoteNo(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+	// England withdraws their vote.
+	_ = events.Write(ch, "chan1", events.TypeDrawVoted, events.DrawVoted{Nation: "England", Accept: false})
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(state.drawProposed, true)
+	is.Equal(len(state.drawVotes), 0) // England's vote was withdrawn
+}
+
+func TestReadState_TracksGameEnded(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypeGameStarted, events.GameStarted{InitialState: json.RawMessage(`{}`)})
+	_ = events.Write(ch, "chan1", events.TypeGameEnded, events.GameEnded{Result: "solo", Winner: "England"})
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(state.ended, true)
+}
+
+func TestReadState_GameEndedResetsDraw(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+	_ = events.Write(ch, "chan1", events.TypeGameEnded, events.GameEnded{Result: "draw"})
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(state.drawProposed, false)
+	is.Equal(len(state.drawVotes), 0)
+}
+
+func TestReadState_TracksBootedPlayers(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypePlayerJoined, events.PlayerJoined{UserID: "u1", Nation: "England"})
+	_ = events.Write(ch, "chan1", events.TypePlayerBooted, events.PlayerBooted{Nation: "England"})
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	_, found := state.players["u1"]
+	is.Equal(found, false)
+	_, nationFound := state.nations["England"]
+	is.Equal(nationFound, false)
+}
+
+func TestReadState_TracksReplacedPlayers(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypePlayerJoined, events.PlayerJoined{UserID: "u1", Nation: "England"})
+	_ = events.Write(ch, "chan1", events.TypePlayerReplaced, events.PlayerReplaced{Nation: "England", NewUserID: "u99"})
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	_, oldFound := state.players["u1"]
+	is.Equal(oldFound, false)
+	is.Equal(state.players["u99"], "England")
+	is.Equal(state.nations["England"], "u99")
+}
+
+func TestReadState_SkipsMalformedDrawProposed(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	seedMalformed(ch, "chan1", events.TypeDrawProposed)
+	// A valid DrawProposed after the bad one.
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(state.drawProposed, true)
+}
+
+func TestReadState_SkipsMalformedDrawVoted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypeDrawProposed, events.DrawProposed{ProposerNation: "England"})
+	seedMalformed(ch, "chan1", events.TypeDrawVoted)
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(len(state.drawVotes), 1) // only England's vote from DrawProposed
+}
+
+func TestReadState_SkipsMalformedPlayerBooted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypePlayerJoined, events.PlayerJoined{UserID: "u1", Nation: "England"})
+	seedMalformed(ch, "chan1", events.TypePlayerBooted)
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(state.players["u1"], "England") // bad event → player still present
+}
+
+func TestReadState_SkipsMalformedPlayerReplaced(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	seedGameCreated(ch, "gm1")
+	_ = events.Write(ch, "chan1", events.TypePlayerJoined, events.PlayerJoined{UserID: "u1", Nation: "England"})
+	seedMalformed(ch, "chan1", events.TypePlayerReplaced)
+	d := newTestDispatcher(ch)
+
+	state, err := d.readState("chan1")
+	is.NoErr(err)
+	is.Equal(state.players["u1"], "England") // bad event → player still original
+}
+
+// ---- /concede ---------------------------------------------------------------
+
+func TestDispatchConcede_PostsGameEnded(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("concede", "chan1", "u1"))
+	is.NoErr(err)
+	is.Equal(ch.lastEventType(), events.TypeGameEnded)
+}
+
+func TestDispatchConcede_GameEndedHasConcessionResult(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("concede", "chan1", "u1"))
+	is.NoErr(err)
+
+	var env events.Envelope
+	is.NoErr(json.Unmarshal([]byte(ch.msgs[len(ch.msgs)-1]), &env))
+	var ge events.GameEnded
+	is.NoErr(json.Unmarshal(env.Payload, &ge))
+	is.Equal(ge.Result, "concession")
+	is.Equal(ge.Winner, "England")
+}
+
+func TestDispatchConcede_RejectsIfNotStarted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	seedGameCreated(ch, "gm1")
+
+	_, err := d.Dispatch(gameCmd("concede", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchConcede_RejectsIfGameEnded(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	_ = events.Write(ch, "chan1", events.TypeGameEnded, events.GameEnded{Result: "solo", Winner: "England"})
+
+	_, err := d.Dispatch(gameCmd("concede", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchConcede_RejectsIfNotPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("concede", "chan1", "outsider"))
+	is.Err(err)
+}
+
+func TestDispatchConcede_RejectsIfChannelFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{histErr: errors.New("channel down")}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(gameCmd("concede", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchConcede_RejectsIfWriteFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	ch.postErrAfter = len(ch.msgs)
+
+	_, err := d.Dispatch(gameCmd("concede", "chan1", "u1"))
+	is.Err(err)
+}
+
+// ---- /pause -----------------------------------------------------------------
+
+func TestDispatchPause_CancelsDeadline(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	resp, err := d.Dispatch(gameCmd("pause", "chan1", "gm1"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchPause_RejectsIfNotGM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("pause", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchPause_RejectsIfNoSession(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(gameCmd("pause", "chan1", "gm1"))
+	is.Err(err)
+}
+
+// ---- /resume ----------------------------------------------------------------
+
+func TestDispatchResume_RestartsDeadline(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	resp, err := d.Dispatch(gameCmd("resume", "chan1", "gm1"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchResume_RejectsIfNotGM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("resume", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchResume_RejectsIfNoSession(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(gameCmd("resume", "chan1", "gm1"))
+	is.Err(err)
+}
+
+// ---- /extend ----------------------------------------------------------------
+
+func TestDispatchExtend_ExtendsDeadline(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	resp, err := d.Dispatch(gameCmd("extend", "chan1", "gm1", "2h"))
+	is.NoErr(err)
+	if !containsStr(resp, "2h") {
+		t.Errorf("expected duration in response, got: %q", resp)
+	}
+}
+
+func TestDispatchExtend_RejectsIfNotGM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("extend", "chan1", "u1", "2h"))
+	is.Err(err)
+}
+
+func TestDispatchExtend_RejectsIfNoSession(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(gameCmd("extend", "chan1", "gm1", "2h"))
+	is.Err(err)
+}
+
+func TestDispatchExtend_RejectsMissingArg(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("extend", "chan1", "gm1"))
+	is.Err(err)
+}
+
+func TestDispatchExtend_RejectsInvalidDuration(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("extend", "chan1", "gm1", "notaduration"))
+	is.Err(err)
+}
+
+// ---- /force-resolve ---------------------------------------------------------
+
+func TestDispatchForceResolve_CallsAdvanceTurn(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	resp, err := d.Dispatch(gameCmd("force-resolve", "chan1", "gm1"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	// PhaseResolved must have been posted.
+	is.Equal(ch.lastEventType(), events.TypePhaseResolved)
+}
+
+func TestDispatchForceResolve_RejectsIfNotGM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("force-resolve", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchForceResolve_RejectsIfNoSession(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(gameCmd("force-resolve", "chan1", "gm1"))
+	is.Err(err)
+}
+
+func TestDispatchForceResolve_RejectsIfAdvanceTurnFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := twoPlayerGame(d, ch)
+	sess.Eng = &mockEngine{
+		phase:      "Spring 1901 Movement",
+		dump:       []byte(`{}`),
+		resolveErr: errors.New("resolve failed"),
+	}
+
+	_, err := d.Dispatch(gameCmd("force-resolve", "chan1", "gm1"))
+	is.Err(err)
+}
+
+// ---- /boot ------------------------------------------------------------------
+
+func TestDispatchBoot_RemovesPlayer(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("boot", "chan1", "gm1", "England"))
+	is.NoErr(err)
+	is.Equal(ch.lastEventType(), events.TypePlayerBooted)
+	_, stillThere := sess.Players["u1"]
+	is.Equal(stillThere, false)
+}
+
+func TestDispatchBoot_RejectsIfNotGM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("boot", "chan1", "u1", "France"))
+	is.Err(err)
+}
+
+func TestDispatchBoot_RejectsIfNoSession(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(gameCmd("boot", "chan1", "gm1", "England"))
+	is.Err(err)
+}
+
+func TestDispatchBoot_RejectsMissingArg(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("boot", "chan1", "gm1"))
+	is.Err(err)
+}
+
+func TestDispatchBoot_RejectsIfNationNotFound(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("boot", "chan1", "gm1", "Russia"))
+	is.Err(err)
+}
+
+func TestDispatchBoot_RejectsIfWriteFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	ch.postErrAfter = len(ch.msgs)
+
+	_, err := d.Dispatch(gameCmd("boot", "chan1", "gm1", "England"))
+	is.Err(err)
+}
+
+// ---- /replace ---------------------------------------------------------------
+
+func TestDispatchReplace_TransfersNation(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("replace", "chan1", "gm1", "England", "newuser"))
+	is.NoErr(err)
+	is.Equal(ch.lastEventType(), events.TypePlayerReplaced)
+	_, oldGone := sess.Players["u1"]
+	is.Equal(oldGone, false)
+	is.Equal(sess.Players["newuser"], "England")
+}
+
+func TestDispatchReplace_RejectsIfNotGM(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("replace", "chan1", "u1", "France", "newuser"))
+	is.Err(err)
+}
+
+func TestDispatchReplace_RejectsIfNoSession(t *testing.T) {
+	is := is.New(t)
+	d := newTestDispatcher(&mockChannel{})
+
+	_, err := d.Dispatch(gameCmd("replace", "chan1", "gm1", "England", "newuser"))
+	is.Err(err)
+}
+
+func TestDispatchReplace_RejectsMissingArgs(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("replace", "chan1", "gm1", "England")) // missing new user
+	is.Err(err)
+}
+
+func TestDispatchReplace_RejectsIfNationNotFound(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+
+	_, err := d.Dispatch(gameCmd("replace", "chan1", "gm1", "Russia", "newuser"))
+	is.Err(err)
+}
+
+func TestDispatchReplace_RejectsIfWriteFails(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	twoPlayerGame(d, ch)
+	ch.postErrAfter = len(ch.msgs)
+
+	_, err := d.Dispatch(gameCmd("replace", "chan1", "gm1", "England", "newuser"))
 	is.Err(err)
 }

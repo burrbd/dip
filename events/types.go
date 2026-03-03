@@ -20,6 +20,8 @@ const (
 	TypeDrawProposed   EventType = "DrawProposed"
 	TypeDrawVoted      EventType = "DrawVoted"
 	TypeGameEnded      EventType = "GameEnded"
+	TypePlayerBooted   EventType = "PlayerBooted"
+	TypePlayerReplaced EventType = "PlayerReplaced"
 )
 
 // Envelope wraps a typed event payload for serialisation in the channel.
@@ -94,4 +96,16 @@ type GameEnded struct {
 	Result     string          `json:"result"`
 	Winner     string          `json:"winner,omitempty"`
 	FinalState json.RawMessage `json:"final_state,omitempty"`
+}
+
+// PlayerBooted is posted when the GM removes a player from the game.
+// Their units will receive NMR (No Moves Received) orders each turn going forward.
+type PlayerBooted struct {
+	Nation string `json:"nation"`
+}
+
+// PlayerReplaced is posted when the GM transfers a nation to a new player.
+type PlayerReplaced struct {
+	Nation    string `json:"nation"`
+	NewUserID string `json:"new_user_id"`
 }

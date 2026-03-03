@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/burrbd/dip/dipmap"
 	"github.com/burrbd/dip/engine"
@@ -98,6 +99,22 @@ func (d *Dispatcher) Dispatch(cmd Command) (string, error) {
 		return d.handleMap(cmd)
 	case "help":
 		return d.handleHelp(cmd)
+	case "draw":
+		return d.handleDraw(cmd)
+	case "concede":
+		return d.handleConcede(cmd)
+	case "pause":
+		return d.handlePause(cmd)
+	case "resume":
+		return d.handleResume(cmd)
+	case "extend":
+		return d.handleExtend(cmd)
+	case "force-resolve":
+		return d.handleForceResolve(cmd)
+	case "boot":
+		return d.handleBoot(cmd)
+	case "replace":
+		return d.handleReplace(cmd)
 	default:
 		return "", fmt.Errorf("bot: unknown command %q", cmd.Name)
 	}
@@ -107,10 +124,13 @@ func (d *Dispatcher) Dispatch(cmd Command) (string, error) {
 type gameState struct {
 	created       bool
 	started       bool
+	ended         bool
 	gmID          string
 	deadlineHours int
 	players       map[string]string // userID → nation
 	nations       map[string]string // nation → userID
+	drawProposed  bool
+	drawVotes     map[string]bool // nation → true if voted yes
 }
 
 // readState scans the channel event log and returns the current game state.
@@ -122,6 +142,7 @@ func (d *Dispatcher) readState(channelID string) (*gameState, error) {
 	gs := &gameState{
 		players:       make(map[string]string),
 		nations:       make(map[string]string),
+		drawVotes:     make(map[string]bool),
 		deadlineHours: 24,
 	}
 	for _, env := range envs {
@@ -145,6 +166,48 @@ func (d *Dispatcher) readState(channelID string) (*gameState, error) {
 			}
 			gs.players[pj.UserID] = pj.Nation
 			gs.nations[pj.Nation] = pj.UserID
+		case events.TypeGameEnded:
+			gs.ended = true
+			gs.drawProposed = false
+			gs.drawVotes = make(map[string]bool)
+		case events.TypeDrawProposed:
+			var dp events.DrawProposed
+			if err := json.Unmarshal(env.Payload, &dp); err != nil {
+				continue
+			}
+			gs.drawProposed = true
+			gs.drawVotes[dp.ProposerNation] = true
+		case events.TypeDrawVoted:
+			var dv events.DrawVoted
+			if err := json.Unmarshal(env.Payload, &dv); err != nil {
+				continue
+			}
+			if dv.Accept {
+				gs.drawVotes[dv.Nation] = true
+			} else {
+				delete(gs.drawVotes, dv.Nation)
+			}
+		case events.TypePlayerBooted:
+			var pb events.PlayerBooted
+			if err := json.Unmarshal(env.Payload, &pb); err != nil {
+				continue
+			}
+			for uid, nation := range gs.players {
+				if nation == pb.Nation {
+					delete(gs.players, uid)
+					delete(gs.nations, pb.Nation)
+					break
+				}
+			}
+		case events.TypePlayerReplaced:
+			var pr events.PlayerReplaced
+			if err := json.Unmarshal(env.Payload, &pr); err != nil {
+				continue
+			}
+			oldUID := gs.nations[pr.Nation]
+			delete(gs.players, oldUID)
+			gs.players[pr.NewUserID] = pr.Nation
+			gs.nations[pr.Nation] = pr.NewUserID
 		}
 	}
 	return gs, nil
@@ -601,21 +664,29 @@ func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 
 // commandHelp maps command names to their help text.
 var commandHelp = map[string]string{
-	"newgame": "/newgame — Start a new game in this channel. You become the GM.",
-	"join":    "/join <nation> — Join the game as a nation (e.g. England, France).",
-	"start":   "/start — Start the game (GM only). Requires 2–7 players.",
-	"order":   "/order <order-text> — Submit a movement order (DM only, Movement phase).",
-	"orders":  "/orders — List your staged orders for the current phase (DM only).",
-	"clear":   "/clear [order] — Clear all staged orders or a specific one (DM only).",
-	"submit":  "/submit — Finalise and submit your orders (DM only, Movement phase).",
-	"retreat": "/retreat <unit_type> <source> <destination> — Retreat a dislodged unit (DM only, Retreat phase).",
-	"disband": "/disband <unit_type> <province> — Disband a unit (DM only, Retreat or Adjustment phase).",
-	"build":   "/build <unit_type> <province> — Build a unit (DM only, Adjustment phase).",
-	"waive":   "/waive — Waive a build slot (DM only, Adjustment phase).",
-	"status":  "/status — Show current phase, SC counts, and submission status.",
-	"history": "/history <turn> — Show adjudication results for a past turn (e.g. /history Spring 1901).",
-	"map":     "/map [territory [n]] — Post the board map. With args, highlights territory and all provinces within n hops.",
-	"help":    "/help [command] — List all commands or show help for a specific command.",
+	"newgame":       "/newgame — Start a new game in this channel. You become the GM.",
+	"join":          "/join <nation> — Join the game as a nation (e.g. England, France).",
+	"start":         "/start — Start the game (GM only). Requires 2–7 players.",
+	"order":         "/order <order-text> — Submit a movement order (DM only, Movement phase).",
+	"orders":        "/orders — List your staged orders for the current phase (DM only).",
+	"clear":         "/clear [order] — Clear all staged orders or a specific one (DM only).",
+	"submit":        "/submit — Finalise and submit your orders (DM only, Movement phase).",
+	"retreat":       "/retreat <unit_type> <source> <destination> — Retreat a dislodged unit (DM only, Retreat phase).",
+	"disband":       "/disband <unit_type> <province> — Disband a unit (DM only, Retreat or Adjustment phase).",
+	"build":         "/build <unit_type> <province> — Build a unit (DM only, Adjustment phase).",
+	"waive":         "/waive — Waive a build slot (DM only, Adjustment phase).",
+	"status":        "/status — Show current phase, SC counts, and submission status.",
+	"history":       "/history <turn> — Show adjudication results for a past turn (e.g. /history Spring 1901).",
+	"map":           "/map [territory [n]] — Post the board map. With args, highlights territory and all provinces within n hops.",
+	"help":          "/help [command] — List all commands or show help for a specific command.",
+	"draw":          "/draw — Propose a draw; subsequent /draw calls from other nations are yes votes.",
+	"concede":       "/concede — Concede the game immediately.",
+	"pause":         "/pause — Pause the phase deadline timer (GM only).",
+	"resume":        "/resume — Resume a paused deadline timer (GM only).",
+	"extend":        "/extend <duration> — Extend the current deadline (GM only, e.g. /extend 2h).",
+	"force-resolve": "/force-resolve — Resolve the current phase immediately (GM only).",
+	"boot":          "/boot <nation> — Remove a player from the game (GM only).",
+	"replace":       "/replace <nation> <user> — Transfer a nation to a new player (GM only).",
 }
 
 // commandList defines the canonical display order for /help.
@@ -624,6 +695,8 @@ var commandList = []string{
 	"order", "orders", "clear", "submit",
 	"retreat", "disband", "build", "waive",
 	"status", "history", "map", "help",
+	"draw", "concede",
+	"pause", "resume", "extend", "force-resolve", "boot", "replace",
 }
 
 // handleHelp processes /help [command] — lists all commands or shows detailed
@@ -646,6 +719,244 @@ func (d *Dispatcher) handleHelp(cmd Command) (string, error) {
 		return text, nil
 	}
 	return "", fmt.Errorf("bot: unknown command %q; use /help for a list", cmd.Args[0])
+}
+
+// handleDraw processes /draw — proposes a draw or casts a yes vote on an
+// active draw proposal. When all remaining nations have voted yes, posts
+// GameEnded with result="draw".
+func (d *Dispatcher) handleDraw(cmd Command) (string, error) {
+	state, err := d.readState(cmd.ChannelID)
+	if err != nil {
+		return "", err
+	}
+	if !state.started || state.ended {
+		return "", fmt.Errorf("bot: no active game in this channel")
+	}
+	nation, ok := state.players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+
+	if !state.drawProposed {
+		// First call: post the proposal.
+		if err := events.Write(d.ch, cmd.ChannelID, events.TypeDrawProposed, events.DrawProposed{
+			ProposerNation: nation,
+		}); err != nil {
+			return "", fmt.Errorf("bot: write DrawProposed: %w", err)
+		}
+		// If this is the only remaining nation the draw resolves immediately.
+		if len(state.nations) == 1 {
+			var finalState json.RawMessage
+			if sess := d.sessions[cmd.ChannelID]; sess != nil {
+				finalState, _ = sess.Eng.Dump()
+			}
+			if err := events.Write(d.ch, cmd.ChannelID, events.TypeGameEnded, events.GameEnded{
+				Result: "draw", FinalState: finalState,
+			}); err != nil {
+				return "", fmt.Errorf("bot: write GameEnded: %w", err)
+			}
+			return "Draw agreed. Game over!", nil
+		}
+		return fmt.Sprintf("Draw proposed by %s. All nations must use /draw to accept.", nation), nil
+	}
+
+	// Draw already active — cast a yes vote.
+	if state.drawVotes[nation] {
+		return "You have already voted for this draw.", nil
+	}
+	if err := events.Write(d.ch, cmd.ChannelID, events.TypeDrawVoted, events.DrawVoted{
+		Nation: nation, Accept: true,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write DrawVoted: %w", err)
+	}
+	state.drawVotes[nation] = true
+
+	// Check whether all remaining nations (by nation name) have now voted yes.
+	allVoted := true
+	for n := range state.nations {
+		if !state.drawVotes[n] {
+			allVoted = false
+			break
+		}
+	}
+	if allVoted {
+		var finalState json.RawMessage
+		if sess := d.sessions[cmd.ChannelID]; sess != nil {
+			finalState, _ = sess.Eng.Dump()
+		}
+		if err := events.Write(d.ch, cmd.ChannelID, events.TypeGameEnded, events.GameEnded{
+			Result: "draw", FinalState: finalState,
+		}); err != nil {
+			return "", fmt.Errorf("bot: write GameEnded: %w", err)
+		}
+		return "All nations agree. The game ends in a draw!", nil
+	}
+
+	remaining := len(state.nations) - len(state.drawVotes)
+	return fmt.Sprintf("%s votes yes for the draw. Waiting for %d more nation(s).", nation, remaining), nil
+}
+
+// handleConcede processes /concede — the caller surrenders, ending the game
+// immediately with result="concession".
+func (d *Dispatcher) handleConcede(cmd Command) (string, error) {
+	state, err := d.readState(cmd.ChannelID)
+	if err != nil {
+		return "", err
+	}
+	if !state.started || state.ended {
+		return "", fmt.Errorf("bot: no active game in this channel")
+	}
+	nation, ok := state.players[cmd.UserID]
+	if !ok {
+		return "", fmt.Errorf("bot: you are not a player in this game")
+	}
+
+	var finalState json.RawMessage
+	if sess := d.sessions[cmd.ChannelID]; sess != nil {
+		finalState, _ = sess.Eng.Dump()
+	}
+	if err := events.Write(d.ch, cmd.ChannelID, events.TypeGameEnded, events.GameEnded{
+		Result: "concession", Winner: nation, FinalState: finalState,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write GameEnded: %w", err)
+	}
+	return fmt.Sprintf("%s concedes. Game over!", nation), nil
+}
+
+// handlePause processes /pause (GM only) — cancels the deadline timer.
+func (d *Dispatcher) handlePause(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+	if cmd.UserID != sess.GMID {
+		return "", fmt.Errorf("bot: only the GM can pause the game")
+	}
+	sess.CancelDeadline()
+	return "Game paused. Use /resume to restart the deadline.", nil
+}
+
+// handleResume processes /resume (GM only) — restarts a paused deadline timer.
+func (d *Dispatcher) handleResume(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+	if cmd.UserID != sess.GMID {
+		return "", fmt.Errorf("bot: only the GM can resume the game")
+	}
+	sess.RestartDeadline()
+	return "Game resumed. Deadline restarted.", nil
+}
+
+// handleExtend processes /extend <duration> (GM only) — adds time to the
+// current phase deadline. Duration uses Go's time.ParseDuration format (e.g. "2h", "30m").
+func (d *Dispatcher) handleExtend(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+	if cmd.UserID != sess.GMID {
+		return "", fmt.Errorf("bot: only the GM can extend the deadline")
+	}
+	if len(cmd.Args) == 0 {
+		return "", fmt.Errorf("bot: usage: /extend <duration>")
+	}
+	dur, err := time.ParseDuration(cmd.Args[0])
+	if err != nil {
+		return "", fmt.Errorf("bot: invalid duration %q: %w", cmd.Args[0], err)
+	}
+	sess.ExtendDeadline(dur)
+	return fmt.Sprintf("Deadline extended by %s.", dur), nil
+}
+
+// handleForceResolve processes /force-resolve (GM only) — triggers AdvanceTurn
+// immediately without waiting for the deadline.
+func (d *Dispatcher) handleForceResolve(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+	if cmd.UserID != sess.GMID {
+		return "", fmt.Errorf("bot: only the GM can force-resolve the current phase")
+	}
+	if err := sess.AdvanceTurn(); err != nil {
+		return "", fmt.Errorf("bot: force-resolve: %w", err)
+	}
+	return "Phase force-resolved.", nil
+}
+
+// handleBoot processes /boot <nation> (GM only) — removes a player from the
+// game. Their units receive NMR orders each turn going forward.
+func (d *Dispatcher) handleBoot(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+	if cmd.UserID != sess.GMID {
+		return "", fmt.Errorf("bot: only the GM can boot players")
+	}
+	if len(cmd.Args) == 0 {
+		return "", fmt.Errorf("bot: usage: /boot <nation>")
+	}
+	nation := cmd.Args[0]
+
+	// Find the userID for the given nation.
+	var userID string
+	for uid, n := range sess.Players {
+		if n == nation {
+			userID = uid
+			break
+		}
+	}
+	if userID == "" {
+		return "", fmt.Errorf("bot: nation %q not found in this game", nation)
+	}
+
+	if err := events.Write(d.ch, cmd.ChannelID, events.TypePlayerBooted, events.PlayerBooted{
+		Nation: nation,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write PlayerBooted: %w", err)
+	}
+	delete(sess.Players, userID)
+	return fmt.Sprintf("%s has been booted from the game.", nation), nil
+}
+
+// handleReplace processes /replace <nation> <user> (GM only) — transfers a
+// nation to a new player identified by user.
+func (d *Dispatcher) handleReplace(cmd Command) (string, error) {
+	sess, ok := d.sessions[cmd.ChannelID]
+	if !ok || sess == nil {
+		return "", fmt.Errorf("bot: no active game found in this channel")
+	}
+	if cmd.UserID != sess.GMID {
+		return "", fmt.Errorf("bot: only the GM can replace players")
+	}
+	if len(cmd.Args) < 2 {
+		return "", fmt.Errorf("bot: usage: /replace <nation> <user>")
+	}
+	nation, newUserID := cmd.Args[0], cmd.Args[1]
+
+	// Find the old userID for the given nation.
+	var oldUserID string
+	for uid, n := range sess.Players {
+		if n == nation {
+			oldUserID = uid
+			break
+		}
+	}
+	if oldUserID == "" {
+		return "", fmt.Errorf("bot: nation %q not found in this game", nation)
+	}
+
+	if err := events.Write(d.ch, cmd.ChannelID, events.TypePlayerReplaced, events.PlayerReplaced{
+		Nation: nation, NewUserID: newUserID,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write PlayerReplaced: %w", err)
+	}
+	delete(sess.Players, oldUserID)
+	sess.Players[newUserID] = nation
+	return fmt.Sprintf("%s is now playing as %s.", newUserID, nation), nil
 }
 
 // allNationsSubmitted reads each player's DM thread to check whether every

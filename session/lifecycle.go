@@ -70,6 +70,7 @@ func (s *Session) startDeadline() {
 	}
 	d := time.Duration(s.DeadlineHours) * time.Hour
 	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(d)
 	s.timer = time.AfterFunc(d, s.onDeadline)
 	s.mu.Unlock()
 }

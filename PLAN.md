@@ -27,6 +27,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 4 — Bot Command Router + Game Setup
 - [x] Story 5 — Movement Phase Commands
 - [x] Story 6 — Retreat & Adjustment Commands
+- [ ] Story 6a — Happy-path Functional Tests for Retreat & Adjustment Commands
 - [x] Story 7 — Info Commands
 - [x] Story 8 — Draw & GM Commands
 - [x] Story 9 — Map Rendering
@@ -178,6 +179,46 @@ adjudicated, and make `Resolve()` report accurate success/failure after advancin
 - `/waive` stages a waive order for one available build
 - Auto-disband via godip `PostProcess` for unordered retreat units
 - Unit tests cover phase-guard rejections and NMR auto-fill
+
+> **Known gap (see Story 6a):** The functional tests for `/retreat`, `/disband`, `/build`, and
+> `/waive` only exercise the phase-guard rejection path (calling the command in the wrong phase).
+> They do not test the actual command behaviour in the correct phase. Story 6a adds proper
+> happy-path functional tests using phase-specific game helpers.
+
+---
+
+### Story 6a — Happy-path Functional Tests for Retreat & Adjustment Commands
+
+**Goal:** Replace phase-guard-only functional tests with end-to-end tests that exercise
+`/retreat`, `/disband`, `/build`, and `/waive` in the correct game phase.
+
+**Files:** `bot/bot_functional_test.go`
+
+**New helpers:**
+
+`retreatPhaseGame(t)` — spins up a full 7-nation game, submits Spring 1901 orders that cause a
+dislodgement (Austria `A Vie-Tri` + `A Bud S A Vie-Tri`, all others hold), and force-resolves.
+Returns a dispatcher in Spring 1901 Retreat phase with Italy's `F Tri` dislodged.
+
+`adjustmentPhaseGame(t)` — spins up a full 7-nation game, submits `F Lon-NTH` for England in
+Spring 1901 (all others hold), force-resolves through Spring, submits `F NTH-NOR` in Fall 1901
+(all others hold), and force-resolves through Fall. Returns a dispatcher in Winter 1901
+Adjustment phase with England owning Norway (+1 SC, needs to build).
+
+**Acceptance criteria:**
+- `retreatPhaseGame(t)` and `adjustmentPhaseGame(t)` helpers exist and produce a dispatcher in
+  the correct phase (verified by reading the current phase from the rebuilt session)
+- `TestCommand_Retreat` — happy path: Italy submits `/retreat F Tri Adr` (or another valid
+  destination); no error returned; an `OrderSubmitted` event is recorded for Italy
+- `TestCommand_Disband_InRetreatPhase` — happy path: Italy submits `/disband F Tri`; no error;
+  `OrderSubmitted` event recorded
+- `TestCommand_Build` — happy path: England submits `/build F Lon`; no error; `OrderSubmitted`
+  event recorded
+- `TestCommand_Waive` — happy path: France submits `/waive` (no build needed, so just confirm
+  no error and the order is staged); or pick a nation that needs to waive
+- Existing phase-guard tests (`TestCommand_Retreat_RejectedOutsideRetreatPhase`, etc.) are
+  kept alongside the new happy-path tests — they remain valid as negative-path coverage
+- `go test -v -tags functional ./bot/` passes
 
 ---
 

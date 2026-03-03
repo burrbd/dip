@@ -103,8 +103,10 @@ access-controlled, and produces the expected event — without mocking the bot o
       unmarshal the payload to check key fields
 - [ ] If the command is GM-only or nation-only, add a second sub-test asserting that an
       unauthorized caller receives `err != nil`
-- [ ] If the command is phase-restricted and the phase cannot be reached in a short test, add a
-      phase-guard rejection test instead of a happy-path test
+- [ ] If the command is phase-restricted, use a phase-specific helper (`retreatPhaseGame`,
+      `adjustmentPhaseGame`) to reach the correct phase and test the happy path. A phase-guard
+      rejection test (calling the command in the wrong phase) is acceptable as *additional*
+      negative-path coverage but is not a substitute for a happy-path test.
 
 **All 24 commands in ARCHITECTURE.md have functional tests as of Story 9.** The mapping is:
 
@@ -117,10 +119,10 @@ access-controlled, and produces the expected event — without mocking the bot o
 | `/orders` | `TestCommand_Orders` |
 | `/clear` | `TestCommand_Clear` |
 | `/submit` | `TestCommand_Submit_PartialDoesNotAdvance`, `TestCommand_Submit_AllPlayersAdvancesPhase` |
-| `/retreat` | `TestCommand_Retreat_RejectedOutsideRetreatPhase` (phase guard) |
-| `/disband` | `TestCommand_Disband_RejectedOutsideRetreatAndAdjustmentPhase` (phase guard) |
-| `/build` | `TestCommand_Build_RejectedOutsideAdjustmentPhase` (phase guard) |
-| `/waive` | `TestCommand_Waive_RejectedOutsideAdjustmentPhase` (phase guard) |
+| `/retreat` | `TestCommand_Retreat_RejectedOutsideRetreatPhase` (phase guard placeholder — Story 6a adds happy-path) |
+| `/disband` | `TestCommand_Disband_RejectedOutsideRetreatAndAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
+| `/build` | `TestCommand_Build_RejectedOutsideAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
+| `/waive` | `TestCommand_Waive_RejectedOutsideAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
 | `/status` | `TestCommand_Status` |
 | `/history` | `TestCommand_History_BeforeFirstResolution` |
 | `/map` | `TestCommand_Map_NoArgs`, `TestCommand_Map_WithTerritoryAndRadius` |

@@ -31,6 +31,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 7 — Info Commands
 - [x] Story 8 — Draw & GM Commands
 - [x] Story 9 — Map Rendering
+- [ ] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -281,6 +282,80 @@ Returns a dispatcher in Winter 1901 Adjustment phase with England owning Norway 
 - `dipmap.Neighborhood(graph, territory, n)` returns all provinces within `n` hops via BFS
   over `graph.Edges()`; `n=0` returns only the territory itself
 - Unit tests cover BFS boundary cases (n=0, n=1, disconnected graph)
+
+---
+
+### Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
+
+**Goal:** Make `/map territory n` useful on small smartphone screens by cropping the
+rendered image to the bounding box of the highlighted neighbourhood, and replace the
+`rsvg-convert` shell-out with a pure-Go SVG→PNG renderer that works inside AWS Lambda.
+
+**Background:**
+
+`/map Vienna 2` currently highlights the neighbourhood provinces on the full Europa
+board. On a smartphone the highlighted region is tiny and unreadable. The fix is to
+compute the bounding box of the highlighted province shapes, expand it by a small
+margin, set a `viewBox` attribute on the SVG `<svg>` element to that rectangle, and
+then rasterise — giving a zoomed-in PNG that fills the image with only the relevant
+region.
+
+The current rasterisation step calls the system binary `rsvg-convert` via `os/exec`.
+This works on a developer machine but is unavailable in the AWS Lambda execution
+environment (the sandbox contains only a minimal set of binaries). It also makes the
+binary a required system dependency, complicating Docker image builds and CI.
+
+**Files:** `dipmap/render.go`, `dipmap/render_test.go`
+
+**New dependency — pure-Go SVG rasteriser:**
+
+Replace `rsvg-convert` with a vendored pure-Go SVG renderer.
+Recommended library: `github.com/srwiley/oksvg` (SVG parsing) +
+`github.com/srwiley/rasterx` (anti-aliased rasterisation) — both are MIT-licensed
+and have no C dependencies.
+
+Because the environment has no network access, the packages must be vendored manually:
+1. Copy `github.com/srwiley/oksvg` and `github.com/srwiley/rasterx` source trees into
+   `vendor/github.com/srwiley/oksvg/` and `vendor/github.com/srwiley/rasterx/`.
+2. Add both to `go.mod` with the correct version tag.
+3. Add entries to `vendor/modules.txt` following the existing pattern.
+
+Alternative if oksvg proves inadequate for godip's SVG dialect: vendor
+`github.com/tdewolff/canvas` (more complete SVG support, pure Go, MIT-licensed) using
+the same manual-vendoring process.
+
+**Acceptance criteria:**
+
+- `svgToPNG` no longer shells out to `rsvg-convert`; it uses the vendored pure-Go
+  renderer to convert SVG bytes → `image.RGBA` → PNG bytes entirely in-process.
+- `go test -v -cover -race ./dipmap/` passes without `rsvg-convert` installed.
+- `Render(state)` (no neighbourhood args) continues to render the full board at its
+  natural dimensions.
+- New function `RenderZoomed(state EngineState, svg []byte, provinces []string) ([]byte, error)`:
+  - Receives the highlighted SVG produced by `Highlight`.
+  - Computes the union bounding box of all `points` / `d` data for the listed provinces
+    by parsing the coordinate sequences already extracted by `extractProvinceShape`.
+  - Adds a configurable padding (e.g. 5% of the diagonal) around the bounding box.
+  - Rewrites the `<svg … viewBox="…">` attribute to that padded bounding box.
+  - Rasterises at a fixed output width (e.g. 800 px) preserving aspect ratio.
+  - Returns a PNG byte slice.
+- `dipmap.Neighborhood` result is passed through `Highlight` then `RenderZoomed` when
+  `/map territory n` is called with `n > 0`; the full-board render is used when `n == 0`
+  or no territory is given.
+- Unit tests cover:
+  - `RenderZoomed` with a minimal synthetic SVG — result is a valid PNG whose pixel
+    dimensions reflect the zoomed bounding box, not the original canvas size.
+  - `RenderZoomed` with an empty province list falls back to the full canvas viewBox.
+  - `svgToPNG` round-trip produces non-empty PNG bytes (integration test, skipped if
+    the renderer returns an unsupported-element error on the real godip SVG — document
+    the skip reason).
+- `go test -v -cover -race ./...` passes.
+
+**`os/exec` audit — no other callers found:**
+
+A codebase-wide search confirms that `os/exec` is used **only** in `dipmap/render.go`
+(and its test). No other packages shell out to external binaries. This story eliminates
+the last remaining `os/exec` dependency.
 
 ---
 

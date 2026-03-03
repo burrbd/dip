@@ -72,6 +72,68 @@ CI runs this same command via CircleCI (`.circleci/config.yml`).
 - Mock interfaces inline in test files
 - Table-driven tests for parsers and validators
 
+### Command functional tests
+
+**Every bot command that accepts arguments requires a functional test in `bot/bot_functional_test.go`.**
+Commands with no arguments should also have a functional test if they have observable side effects
+(e.g. `/pause`, `/concede`). The goal is end-to-end confidence that the command is wired up,
+access-controlled, and produces the expected event — without mocking the bot or engine internals.
+
+**How they work:**
+
+1. Build tag `//go:build functional` keeps them out of the standard `go test ./...` run.
+   Run explicitly with `go test -v -tags functional ./bot/`.
+2. `startedGame(t)` is the shared helper that spins up a fresh `memChannel` + `Dispatcher`,
+   runs `/newgame`, `/join England` (u1), `/join France` (u2), `/start` (gm), and returns the
+   dispatcher and channel. Use it whenever the test needs an in-progress game.
+3. `memChannel` is the in-memory `events.Channel` implementation (msgs, dms, imgs slices).
+   `events.Scan` / `events.ScanDM` work correctly against it — no mocking.
+4. Call `d.Dispatch(chanCmd(...))` or `d.Dispatch(dmCmd(...))` to invoke the command and assert
+   on the response string and/or events written to `memChannel`.
+5. Commands that are only valid in Retreat or Adjustment phase (unreachable from a fresh Spring
+   1901 game) must test the **phase-guard rejection path**: call the command in Movement phase and
+   assert `err != nil`. This proves the command is wired and correctly access-controlled.
+
+**Checklist when adding a new command:**
+
+- [ ] Add `TestCommand_<Name>` to `bot/bot_functional_test.go`
+- [ ] If the command requires arguments, verify the response references the argument (province,
+      nation, duration, etc.)
+- [ ] If the command writes an event, assert `hasEvent(t, ch, channelID, events.Type...)` and
+      unmarshal the payload to check key fields
+- [ ] If the command is GM-only or nation-only, add a second sub-test asserting that an
+      unauthorized caller receives `err != nil`
+- [ ] If the command is phase-restricted and the phase cannot be reached in a short test, add a
+      phase-guard rejection test instead of a happy-path test
+
+**All 24 commands in ARCHITECTURE.md have functional tests as of Story 9.** The mapping is:
+
+| Command | Test function(s) |
+|---|---|
+| `/newgame` | `TestCommand_Newgame` |
+| `/join` | `TestCommand_Join`, `TestCommand_Join_RejectedIfNationTaken` |
+| `/start` | `TestCommand_Start`, `TestCommand_Start_RejectedByNonGM` |
+| `/order` | `TestCommand_Order`, `TestCommand_Order_RejectedForWrongNation` |
+| `/orders` | `TestCommand_Orders` |
+| `/clear` | `TestCommand_Clear` |
+| `/submit` | `TestCommand_Submit_PartialDoesNotAdvance`, `TestCommand_Submit_AllPlayersAdvancesPhase` |
+| `/retreat` | `TestCommand_Retreat_RejectedOutsideRetreatPhase` (phase guard) |
+| `/disband` | `TestCommand_Disband_RejectedOutsideRetreatAndAdjustmentPhase` (phase guard) |
+| `/build` | `TestCommand_Build_RejectedOutsideAdjustmentPhase` (phase guard) |
+| `/waive` | `TestCommand_Waive_RejectedOutsideAdjustmentPhase` (phase guard) |
+| `/status` | `TestCommand_Status` |
+| `/history` | `TestCommand_History_BeforeFirstResolution` |
+| `/map` | `TestCommand_Map_NoArgs`, `TestCommand_Map_WithTerritoryAndRadius` |
+| `/help` | `TestCommand_Help_NoArgs`, `TestCommand_Help_WithCommand` |
+| `/draw` | `TestCommand_Draw_ProposesOnFirstCall`, `TestCommand_Draw_AllNationsEndGame` |
+| `/concede` | `TestCommand_Concede` |
+| `/pause` | `TestCommand_Pause` |
+| `/resume` | `TestCommand_Resume` |
+| `/extend` | `TestCommand_Extend` |
+| `/force-resolve` | `TestCommand_ForceResolve` |
+| `/boot` | `TestCommand_Boot` |
+| `/replace` | `TestCommand_Replace` |
+
 ---
 
 ## Package Conventions

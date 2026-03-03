@@ -650,3 +650,159 @@ func TestOnDeadline_CallsAdvanceTurn(t *testing.T) {
 
 	is.Equal(ch.msgCount(), 1) // PhaseResolved was posted
 }
+
+// ---- RestartDeadline tests --------------------------------------------------
+
+func TestRestartDeadline_StartsTimerWithRemainingTime(t *testing.T) {
+	s := &Session{DeadlineHours: 24}
+	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(time.Hour) // 1 hour remaining
+	s.mu.Unlock()
+
+	s.RestartDeadline()
+
+	s.mu.Lock()
+	timerSet := s.timer != nil
+	s.mu.Unlock()
+	if !timerSet {
+		t.Error("expected timer to be set when deadlineAt is in the future")
+	}
+	s.CancelDeadline()
+}
+
+func TestRestartDeadline_UsesFullDeadlineWhenDeadlineAtInPast(t *testing.T) {
+	s := &Session{DeadlineHours: 24}
+	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(-time.Hour) // already in the past
+	s.mu.Unlock()
+
+	s.RestartDeadline()
+
+	s.mu.Lock()
+	timerSet := s.timer != nil
+	s.mu.Unlock()
+	if !timerSet {
+		t.Error("expected timer to be set using full DeadlineHours fallback")
+	}
+	s.CancelDeadline()
+}
+
+func TestRestartDeadline_NoOpWhenDeadlineHoursZeroAndDeadlineAtZero(t *testing.T) {
+	s := &Session{DeadlineHours: 0}
+	s.RestartDeadline()
+	s.mu.Lock()
+	timerNil := s.timer == nil
+	s.mu.Unlock()
+	if !timerNil {
+		t.Error("expected no timer when DeadlineHours=0 and deadlineAt is zero")
+	}
+}
+
+func TestRestartDeadline_CancelsExistingTimer(t *testing.T) {
+	is := is.New(t)
+	s := &Session{DeadlineHours: 24}
+	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(time.Hour)
+	s.mu.Unlock()
+
+	fired := false
+	s.mu.Lock()
+	s.timer = time.AfterFunc(time.Hour, func() { fired = true })
+	s.mu.Unlock()
+
+	s.RestartDeadline()
+	s.CancelDeadline()
+
+	is.Equal(fired, false)
+}
+
+func TestRestartDeadline_NoTimerCancelWhenNilTimer(t *testing.T) {
+	// Should not panic when called with no existing timer.
+	s := &Session{DeadlineHours: 24}
+	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(time.Hour)
+	s.mu.Unlock()
+	// s.timer is nil here
+	s.RestartDeadline()
+	s.CancelDeadline()
+}
+
+// ---- ExtendDeadline tests ---------------------------------------------------
+
+func TestExtendDeadline_ExtendsByDurationFromExistingDeadline(t *testing.T) {
+	s := &Session{DeadlineHours: 24}
+	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(time.Hour)
+	s.mu.Unlock()
+
+	s.ExtendDeadline(30 * time.Minute)
+
+	s.mu.Lock()
+	timerSet := s.timer != nil
+	s.mu.Unlock()
+	if !timerSet {
+		t.Error("expected timer to be set after extending deadline")
+	}
+	s.CancelDeadline()
+}
+
+func TestExtendDeadline_FallsBackToDeadlineHoursWhenDeadlineAtZero(t *testing.T) {
+	s := &Session{DeadlineHours: 24}
+	// deadlineAt is zero value
+
+	s.ExtendDeadline(time.Hour)
+
+	s.mu.Lock()
+	timerSet := s.timer != nil
+	s.mu.Unlock()
+	if !timerSet {
+		t.Error("expected timer to be set when deadlineAt is zero but DeadlineHours > 0")
+	}
+	s.CancelDeadline()
+}
+
+func TestExtendDeadline_NoOpWhenDeadlineHoursZeroAndDeadlineAtZero(t *testing.T) {
+	s := &Session{DeadlineHours: 0}
+	// deadlineAt is zero
+	s.ExtendDeadline(time.Hour)
+	s.mu.Lock()
+	timerNil := s.timer == nil
+	s.mu.Unlock()
+	if !timerNil {
+		t.Error("expected no timer when DeadlineHours=0 and deadlineAt is zero")
+	}
+}
+
+func TestExtendDeadline_NoTimerWhenExtendedDeadlineInPast(t *testing.T) {
+	s := &Session{DeadlineHours: 0}
+	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(-2 * time.Hour)
+	s.mu.Unlock()
+
+	s.ExtendDeadline(-time.Hour) // still in the past after extension
+
+	s.mu.Lock()
+	timerNil := s.timer == nil
+	s.mu.Unlock()
+	if !timerNil {
+		t.Error("expected no timer when extended deadline is still in the past")
+	}
+}
+
+func TestExtendDeadline_CancelsExistingTimer(t *testing.T) {
+	is := is.New(t)
+	s := &Session{DeadlineHours: 24}
+	s.mu.Lock()
+	s.deadlineAt = time.Now().Add(time.Hour)
+	s.mu.Unlock()
+
+	fired := false
+	s.mu.Lock()
+	s.timer = time.AfterFunc(time.Hour, func() { fired = true })
+	s.mu.Unlock()
+
+	s.ExtendDeadline(30 * time.Minute)
+	s.CancelDeadline()
+
+	is.Equal(fired, false)
+}

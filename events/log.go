@@ -21,7 +21,7 @@ type Channel interface {
 }
 
 // Write serialises payload as a JSON Envelope and posts it to channelID.
-func Write(ch Channel, channelID string, eventType EventType, payload any) error {
+func Write(ch Channel, channelID string, eventType EventType, payload interface{}) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("events: marshal payload: %w", err)
@@ -33,7 +33,7 @@ func Write(ch Channel, channelID string, eventType EventType, payload any) error
 }
 
 // WriteDM serialises payload as a JSON Envelope and sends it to userID's DM thread.
-func WriteDM(ch Channel, userID string, eventType EventType, payload any) error {
+func WriteDM(ch Channel, userID string, eventType EventType, payload interface{}) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("events: marshal payload: %w", err)

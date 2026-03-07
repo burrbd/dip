@@ -17,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/zond/godip/variants/classical"
+	"github.com/srwiley/oksvg"
+	"github.com/srwiley/rasterx"
 )
 
 // EngineState is the minimal engine interface needed for map rendering.
@@ -80,8 +82,15 @@ func svgToPNGWith(svg []byte, encoderFn func(io.Writer, image.Image) error) ([]b
 	if w <= 0 || h <= 0 {
 		w, h = 600, 400
 	}
+	icon, err := oksvg.ReadIconStream(bytes.NewReader(svg))
+	if err != nil {
+		return nil, fmt.Errorf("dipmap: parse SVG: %w", err)
+	}
+	icon.SetTarget(0, 0, float64(w), float64(h))
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+	scanner := rasterx.NewScannerGV(w, h, img, img.Bounds())
+	raster := rasterx.NewDasher(w, h, scanner)
+	icon.Draw(raster, 1.0)
 	var buf bytes.Buffer
 	if err := encoderFn(&buf, img); err != nil {
 		return nil, fmt.Errorf("dipmap: encode PNG: %w", err)

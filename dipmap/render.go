@@ -72,6 +72,13 @@ func SVGToPNG(svg []byte) ([]byte, error) { return svgToPNG(svg) }
 
 // svgToPNGWith is the testable core of svgToPNG with an injectable PNG encoder.
 func svgToPNGWith(svg []byte, encoderFn func(io.Writer, image.Image) error) ([]byte, error) {
+	// oksvg's CSS parser cannot handle embedded data URIs (e.g. @font-face with
+	// src: url(...;charset=utf-8;base64,...)) — semicolons inside the URI are
+	// treated as CSS property separators and trigger a parse error. Strip all
+	// <style> elements before rasterising; they carry only embedded fonts that
+	// oksvg does not render anyway.
+	svg = regexp.MustCompile(`(?s)<style[^>]*>.*?</style\s*>`).ReplaceAll(svg, nil)
+
 	svgStr := string(svg)
 	// Prefer viewBox for natural dimensions (godip SVGs use width="100%").
 	_, _, vw, vh := parseSVGViewBox(svgStr)

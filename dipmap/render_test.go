@@ -116,6 +116,13 @@ func TestSVGToPNGWith_EncoderError_ReturnsError(t *testing.T) {
 	is.NotNil(err)
 }
 
+func TestSVGToPNGWith_MalformedXML_ReturnsError(t *testing.T) {
+	is := is.New(t)
+	// Malformed XML causes oksvg.ReadIconStream to return an XML syntax error.
+	_, err := svgToPNGWith([]byte(`<svg><unclosed`), png.Encode)
+	is.NotNil(err)
+}
+
 // ---- parseSVGViewBox --------------------------------------------------------
 
 func TestParseSVGViewBox_WithValidViewBox_ReturnsValues(t *testing.T) {

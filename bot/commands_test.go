@@ -97,6 +97,7 @@ type mockEngine struct {
 	advanceErr error
 	soloWinner string
 	dislodgeds map[string]string
+	units      map[string]engine.UnitInfo
 }
 
 func (e *mockEngine) SubmitOrder(_, _ string) error {
@@ -115,8 +116,13 @@ func (e *mockEngine) Dislodgeds() map[string]string {
 	}
 	return e.dislodgeds
 }
-func (e *mockEngine) SupplyCenters() map[string]int         { return make(map[string]int) }
-func (e *mockEngine) Units() map[string]engine.UnitInfo     { return make(map[string]engine.UnitInfo) }
+func (e *mockEngine) SupplyCenters() map[string]int { return make(map[string]int) }
+func (e *mockEngine) Units() map[string]engine.UnitInfo {
+	if e.units != nil {
+		return e.units
+	}
+	return make(map[string]engine.UnitInfo)
+}
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -1585,14 +1591,42 @@ func TestDispatchMap_RejectsPostImageError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestDispatchMap_RejectsRenderError(t *testing.T) {
+func TestDispatchMap_RejectsSVGLoadError(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 	makeDMSession(d, ch, "chan1")
-	// Inject a render function that always fails.
-	d.renderFn = func(_ dipmap.EngineState) ([]byte, error) {
-		return nil, errors.New("render failed")
+	// svgFn is called first, before the full-board / zoom split.
+	d.svgFn = func(_ dipmap.EngineState) ([]byte, error) {
+		return nil, errors.New("svg load failed")
+	}
+
+	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_RejectsOverlayError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	// SVG loads fine; overlay injection fails.
+	d.overlayFn = func(_ []byte, _ map[string]dipmap.Unit) ([]byte, error) {
+		return nil, errors.New("overlay failed")
+	}
+
+	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+func TestDispatchMap_RejectsPNGError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeDMSession(d, ch, "chan1")
+	// SVG load and overlay succeed; PNG conversion fails (full-board path).
+	d.pngFn = func(_ []byte) ([]byte, error) {
+		return nil, errors.New("png failed")
 	}
 
 	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
@@ -1604,7 +1638,7 @@ func TestDispatchMap_RejectsHighlightError(t *testing.T) {
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 	makeDMSession(d, ch, "chan1")
-	// Render succeeds; highlight fails.
+	// SVG load and overlay succeed; highlight fails (zoomed path).
 	d.highlightFn = func(_ []byte, _ []string) ([]byte, error) {
 		return nil, errors.New("highlight failed")
 	}
@@ -1613,13 +1647,39 @@ func TestDispatchMap_RejectsHighlightError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestDispatchMap_RejectsRenderErrorInTerritoryPath(t *testing.T) {
+func TestDispatchMap_OverlaysUnitsOnMap(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	sess := makeDMSession(d, ch, "chan1")
+	// Seed an engine that reports a unit at "par".
+	sess.Eng = &mockEngine{
+		phase: "Spring 1901 Movement",
+		dump:  []byte(`{}`),
+		units: map[string]engine.UnitInfo{"par": {Type: "Army", Nation: "France"}},
+	}
+
+	var gotUnits map[string]dipmap.Unit
+	d.overlayFn = func(svg []byte, units map[string]dipmap.Unit) ([]byte, error) {
+		gotUnits = units
+		return svg, nil
+	}
+
+	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if gotUnits["par"].Type != "Army" || gotUnits["par"].Nation != "France" {
+		t.Errorf("expected France Army at par, got %+v", gotUnits["par"])
+	}
+}
+
+func TestDispatchMap_RejectsZoomError(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 	makeDMSession(d, ch, "chan1")
-	d.renderFn = func(_ dipmap.EngineState) ([]byte, error) {
-		return nil, errors.New("render failed")
+	// SVG load and highlight succeed; zoom render fails.
+	d.renderZoomedFn = func(_ dipmap.EngineState, _ []byte, _ []string) ([]byte, error) {
+		return nil, errors.New("zoom failed")
 	}
 
 	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})

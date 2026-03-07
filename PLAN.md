@@ -32,6 +32,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 8 — Draw & GM Commands
 - [x] Story 9 — Map Rendering
 - [x] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
+- [x] Story 9b — Unit Overlay: Draw Armies and Fleets on the Map
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -379,6 +380,47 @@ the last remaining `os/exec` dependency.
   HTTP server, webhook registration, and `bot.Dispatch`
 - Unit tests cover all Channel methods using a mock Telegram API server
 - `go test -v -cover -race ./...` passes
+
+---
+
+### Story 9b — Unit Overlay: Draw Armies and Fleets on the Map
+
+**Goal:** Display army and fleet positions on the rendered map. Province
+centroids are computed from each province's polygon bounding box; a labelled
+circle glyph is injected into the SVG before rasterisation.
+
+**Files:** `dipmap/overlay.go`, `dipmap/overlay_test.go`, `dipmap/render.go`,
+`bot/commands.go`, `bot/commands_test.go`
+
+**Acceptance criteria:**
+
+- New `dipmap.Unit` struct: `{ Type string; Nation string }` where `Type` is
+  `"Army"` or `"Fleet"` and `Nation` is e.g. `"England"`.
+- New function `dipmap.Overlay(svg []byte, units map[string]Unit) ([]byte, error)`:
+  - Computes the centroid of each province's polygon from its points/d data.
+  - Injects an SVG `<circle>` + `<text>` glyph for each unit, coloured by
+    nation (standard Diplomacy palette). Unknown nations default to `#333333`.
+  - Army label `"A"`, Fleet label `"F"`.
+  - Provinces not found in the SVG are silently skipped.
+  - Empty unit map returns the original SVG unchanged.
+- `dipmap.SVGToPNG(svg []byte) ([]byte, error)` — exported wrapper over the
+  internal `svgToPNG`; default `pngFn` for `bot.Dispatcher`.
+- `bot.Dispatcher.handleMap` pipeline (both full-board and zoomed):
+  1. `svgFn` — load raw SVG
+  2. `overlayFn` — inject unit glyphs (converts `engine.UnitInfo` → `dipmap.Unit`)
+  3a. Full-board (`n == 0` or no territory): `pngFn(svg)` → PNG
+  3b. Zoomed (`n > 0`): `highlightFn` → `renderZoomedFn` → PNG
+- `renderFn` removed from `Dispatcher`; replaced by `pngFn func([]byte)([]byte, error)`.
+- New injectable `overlayFn` field on `Dispatcher`.
+- Unit tests cover:
+  - `Overlay` with known province → SVG contains `<g id="units">` and glyph
+  - `Overlay` with unknown province → SVG unchanged
+  - `Overlay` with empty map → SVG unchanged
+  - `provinceCenter` valid / unknown / no-numeric-coords cases
+  - `unitGlyph` for Army+known nation and Fleet+unknown nation
+  - Bot: `TestDispatchMap_RejectsSVGLoadError`, `TestDispatchMap_RejectsOverlayError`,
+    `TestDispatchMap_RejectsPNGError`, `TestDispatchMap_OverlaysUnitsOnMap`
+- `go test -v -cover -race ./...` passes with 100% dipmap and bot coverage.
 
 ---
 

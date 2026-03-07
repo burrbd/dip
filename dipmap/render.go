@@ -63,6 +63,11 @@ func svgToPNG(svg []byte) ([]byte, error) {
 	return svgToPNGWith(svg, png.Encode)
 }
 
+// SVGToPNG is the exported form of svgToPNG. It is used as the default pngFn
+// for bot.Dispatcher so callers can convert a pre-processed SVG (with overlay
+// and highlight layers already applied) to a PNG byte slice.
+func SVGToPNG(svg []byte) ([]byte, error) { return svgToPNG(svg) }
+
 // svgToPNGWith is the testable core of svgToPNG with an injectable PNG encoder.
 func svgToPNGWith(svg []byte, encoderFn func(io.Writer, image.Image) error) ([]byte, error) {
 	svgStr := string(svg)

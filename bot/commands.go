@@ -43,16 +43,17 @@ type EngineFactory func(variant string) (engine.Engine, error)
 
 // Dispatcher routes commands to their handlers and holds in-process sessions.
 type Dispatcher struct {
-	ch              events.Channel
-	notifier        session.Notifier
-	loader          session.EngineLoader
-	newEng          EngineFactory
-	sessions        map[string]*session.Session
-	graph           dipmap.Graph                                               // optional board graph for /map neighbourhood queries
-	renderFn        func(dipmap.EngineState) ([]byte, error)                  // defaults to dipmap.Render (full-board PNG)
-	svgFn           func(dipmap.EngineState) ([]byte, error)                  // defaults to dipmap.LoadSVG (raw SVG bytes)
-	highlightFn     func([]byte, []string) ([]byte, error)                    // defaults to dipmap.Highlight
-	renderZoomedFn  func(dipmap.EngineState, []byte, []string) ([]byte, error) // defaults to dipmap.RenderZoomed
+	ch             events.Channel
+	notifier       session.Notifier
+	loader         session.EngineLoader
+	newEng         EngineFactory
+	sessions       map[string]*session.Session
+	graph          dipmap.Graph                                                // optional board graph for /map neighbourhood queries
+	svgFn          func(dipmap.EngineState) ([]byte, error)                   // defaults to dipmap.LoadSVG (raw SVG bytes)
+	overlayFn      func([]byte, map[string]dipmap.Unit) ([]byte, error)       // defaults to dipmap.Overlay (unit glyphs)
+	pngFn          func([]byte) ([]byte, error)                               // defaults to dipmap.SVGToPNG (full-board PNG)
+	highlightFn    func([]byte, []string) ([]byte, error)                     // defaults to dipmap.Highlight
+	renderZoomedFn func(dipmap.EngineState, []byte, []string) ([]byte, error) // defaults to dipmap.RenderZoomed
 }
 
 // New returns a Dispatcher wired to the given dependencies.
@@ -63,8 +64,9 @@ func New(ch events.Channel, notifier session.Notifier, loader session.EngineLoad
 		loader:         loader,
 		newEng:         newEng,
 		sessions:       make(map[string]*session.Session),
-		renderFn:       dipmap.Render,
 		svgFn:          dipmap.LoadSVG,
+		overlayFn:      dipmap.Overlay,
+		pngFn:          dipmap.SVGToPNG,
 		highlightFn:    dipmap.Highlight,
 		renderZoomedFn: dipmap.RenderZoomed,
 	}
@@ -625,9 +627,15 @@ func (d *Dispatcher) boardGraph() dipmap.Graph {
 	return dipmap.EmptyGraph{}
 }
 
-// handleMap processes /map [territory [n]] — renders the board and posts it
-// as an image. With territory and n > 0, highlights the neighbourhood and
-// returns a zoomed crop. With no territory or n == 0, returns the full board.
+// handleMap processes /map [territory [n]] — renders the board with unit
+// positions and posts it as an image. With territory and n > 0, highlights the
+// neighbourhood and crops to a zoomed view. Otherwise the full board is shown.
+//
+// Pipeline (both paths):
+//  1. svgFn   — load raw SVG asset
+//  2. overlayFn — inject army/fleet glyphs at province centroids
+//  3a. Full board: pngFn — rasterise to PNG
+//  3b. Zoomed:    highlightFn → renderZoomedFn — highlight + crop → PNG
 func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 	sess, ok := d.sessions[cmd.ChannelID]
 	if !ok || sess == nil {
@@ -647,27 +655,37 @@ func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 		n = parsed
 	}
 
+	// Step 1: load SVG.
+	svg, err := d.svgFn(sess.Eng)
+	if err != nil {
+		return "", fmt.Errorf("bot: render map: %w", err)
+	}
+
+	// Step 2: overlay unit positions.
+	engUnits := sess.Eng.Units()
+	units := make(map[string]dipmap.Unit, len(engUnits))
+	for p, u := range engUnits {
+		units[p] = dipmap.Unit{Type: u.Type, Nation: u.Nation}
+	}
+	svg, err = d.overlayFn(svg, units)
+	if err != nil {
+		return "", fmt.Errorf("bot: render map: %w", err)
+	}
+
+	// Step 3: rasterise.
 	var img []byte
 	if territory != "" && n > 0 {
-		// Zoomed path: load SVG → highlight neighbourhood → render zoomed PNG.
 		provinces := dipmap.Neighborhood(d.boardGraph(), territory, n)
-		svg, err := d.svgFn(sess.Eng)
+		svg, err = d.highlightFn(svg, provinces)
 		if err != nil {
 			return "", fmt.Errorf("bot: render map: %w", err)
 		}
-		highlighted, err := d.highlightFn(svg, provinces)
+		img, err = d.renderZoomedFn(sess.Eng, svg, provinces)
 		if err != nil {
 			return "", fmt.Errorf("bot: render map: %w", err)
-		}
-		var err2 error
-		img, err2 = d.renderZoomedFn(sess.Eng, highlighted, provinces)
-		if err2 != nil {
-			return "", fmt.Errorf("bot: render map: %w", err2)
 		}
 	} else {
-		// Full-board path: render the whole map as PNG.
-		var err error
-		img, err = d.renderFn(sess.Eng)
+		img, err = d.pngFn(svg)
 		if err != nil {
 			return "", fmt.Errorf("bot: render map: %w", err)
 		}

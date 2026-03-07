@@ -101,6 +101,14 @@ func TestSVGToPNG_NoDimensions_ReturnsDefaultSizePNG(t *testing.T) {
 	is.NotNil(result)
 }
 
+func TestSVGToPNG_ExportedWrapper_ReturnsPNG(t *testing.T) {
+	is := is.New(t)
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>`)
+	result, err := SVGToPNG(svg)
+	is.NoErr(err)
+	is.NotNil(result)
+}
+
 func TestSVGToPNGWith_EncoderError_ReturnsError(t *testing.T) {
 	is := is.New(t)
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>`)

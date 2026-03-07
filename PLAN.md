@@ -33,6 +33,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9 — Map Rendering
 - [x] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
 - [x] Story 9b — Unit Overlay: Draw Armies and Fleets on the Map
+- [ ] Story 9c — Real SVG Rasterisation (oksvg + rasterx)
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -421,6 +422,45 @@ circle glyph is injected into the SVG before rasterisation.
   - Bot: `TestDispatchMap_RejectsSVGLoadError`, `TestDispatchMap_RejectsOverlayError`,
     `TestDispatchMap_RejectsPNGError`, `TestDispatchMap_OverlaysUnitsOnMap`
 - `go test -v -cover -race ./...` passes with 100% dipmap and bot coverage.
+
+---
+
+### Story 9c — Real SVG Rasterisation (oksvg + rasterx)
+
+**Goal:** Replace the blank-white stub renderer in `svgToPNGWith` with a real
+pure-Go SVG rasteriser so that the map image posted to the channel shows actual
+board geography (land, sea, province borders) and unit glyphs.
+
+**Pre-requisite:** vendor `oksvg` + `rasterx` + `golang.org/x/image` (which
+`oksvg` depends on transitively). Run once with network access:
+
+```bash
+go get github.com/srwiley/rasterx@latest
+go get github.com/srwiley/oksvg@latest
+go mod tidy
+go mod vendor
+```
+
+**Files:** `dipmap/render.go`, `dipmap/render_test.go`
+
+**Acceptance criteria:**
+
+- `svgToPNGWith` replaces `image.NewRGBA` + blank fill with an `oksvg` render
+  pass: parse the SVG with `oksvg.ReadIconStream`, create an `rasterx` scanner
+  backed by an `image.RGBA`, call `icon.Draw(scanner, 1.0)`, then encode via
+  `encoderFn`.
+- `Render(state)` posts a visually correct full-board PNG (province polygons
+  filled, borders visible).
+- `RenderZoomed` posts a zoomed crop with highlighted provinces and unit glyphs
+  visible.
+- If `oksvg` returns an unsupported-element error for the real godip SVG, the
+  integration test is skipped with a documented reason (the existing
+  `TestRender_ReturnsPNGBytes` skip pattern).
+- A new `TestSVGToPNGWith_RendersContent` test decodes the returned PNG and
+  asserts that at least one non-white pixel exists (proves the rasteriser fired,
+  not the stub). This test is skipped if oksvg errors on the test SVG.
+- All existing tests continue to pass; `go test -v -cover -race ./...` at 100%
+  for `dipmap`.
 
 ---
 

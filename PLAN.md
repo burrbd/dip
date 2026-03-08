@@ -595,10 +595,9 @@ present in `vendor/`:
 
 - Nations list: `classical.Nations` (`[]godip.Nation`)
 - Home SCs: `start.SupplyCenters()` — filter to entries whose value equals the nation
-- Province long names: `classical.ProvinceLongNames` (`map[godip.Province]string`) — this
-  map already exists in `vendor/github.com/zond/godip/variants/classical/classical.go` but
-  may not be exported; if unexported, define an equivalent map in `bot/reference.go` using
-  the same data
+- Province long names: `classical.ClassicalVariant.ProvinceLongNames` (`map[godip.Province]string`) —
+  accessible via the exported `ProvinceLongNames` field on the `common.Variant` struct; no mirroring
+  needed
 - Starting units: `start.Units()` (`map[godip.Province]godip.Unit`) — for `/nations <nation>`
 
 ---

@@ -478,15 +478,24 @@ func (d *Dispatcher) handleRetreat(cmd Command) (string, error) {
 		return "", fmt.Errorf("bot: usage: /retreat <unit_type> <source> <destination>")
 	}
 	unitType, src, dest := cmd.Args[0], cmd.Args[1], cmd.Args[2]
+	src = strings.ToLower(src)
 	dislodgeds := sess.Eng.Dislodgeds()
 	if n, exists := dislodgeds[src]; !exists || n != nation {
 		return "", fmt.Errorf("bot: no dislodged %s unit at %s belonging to %s", unitType, src, nation)
 	}
-	orderText := fmt.Sprintf("%s %s R %s", unitType, src, dest)
+	orderText := fmt.Sprintf("%s %s-%s", unitType, src, dest)
 	if err := sess.Eng.SubmitOrder(nation, orderText); err != nil {
 		return "", fmt.Errorf("bot: invalid retreat order: %w", err)
 	}
 	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+	if err := events.WriteDM(d.ch, cmd.UserID, events.TypeOrderSubmitted, events.OrderSubmitted{
+		UserID: cmd.UserID,
+		Nation: nation,
+		Orders: []string{orderText},
+		Phase:  sess.Phase,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
+	}
 	return fmt.Sprintf("Retreat order staged: %s", orderText), nil
 }
 
@@ -511,17 +520,26 @@ func (d *Dispatcher) handleDisband(cmd Command) (string, error) {
 		return "", fmt.Errorf("bot: usage: /disband <unit_type> <province>")
 	}
 	unitType, src := cmd.Args[0], cmd.Args[1]
+	src = strings.ToLower(src)
 	if isRetreatPhase(sess.Phase) {
 		dislodgeds := sess.Eng.Dislodgeds()
 		if n, exists := dislodgeds[src]; !exists || n != nation {
 			return "", fmt.Errorf("bot: no dislodged %s unit at %s belonging to %s", unitType, src, nation)
 		}
 	}
-	orderText := fmt.Sprintf("%s %s D", unitType, src)
+	orderText := fmt.Sprintf("%s %s disband", unitType, src)
 	if err := sess.Eng.SubmitOrder(nation, orderText); err != nil {
 		return "", fmt.Errorf("bot: invalid disband order: %w", err)
 	}
 	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+	if err := events.WriteDM(d.ch, cmd.UserID, events.TypeOrderSubmitted, events.OrderSubmitted{
+		UserID: cmd.UserID,
+		Nation: nation,
+		Orders: []string{orderText},
+		Phase:  sess.Phase,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
+	}
 	return fmt.Sprintf("Disband order staged: %s", orderText), nil
 }
 
@@ -546,11 +564,19 @@ func (d *Dispatcher) handleBuild(cmd Command) (string, error) {
 		return "", fmt.Errorf("bot: usage: /build <unit_type> <province>")
 	}
 	unitType, province := cmd.Args[0], cmd.Args[1]
-	orderText := fmt.Sprintf("%s %s B", unitType, province)
+	orderText := fmt.Sprintf("build %s %s", unitType, province)
 	if err := sess.Eng.SubmitOrder(nation, orderText); err != nil {
 		return "", fmt.Errorf("bot: invalid build order: %w", err)
 	}
 	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+	if err := events.WriteDM(d.ch, cmd.UserID, events.TypeOrderSubmitted, events.OrderSubmitted{
+		UserID: cmd.UserID,
+		Nation: nation,
+		Orders: []string{orderText},
+		Phase:  sess.Phase,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
+	}
 	return fmt.Sprintf("Build order staged: %s", orderText), nil
 }
 

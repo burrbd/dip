@@ -637,28 +637,115 @@ func TestCommand_Map_WithTerritoryAndRadius(t *testing.T) {
 }
 
 func TestCommand_Help_NoArgs(t *testing.T) {
-	// /help lists all available commands.
+	// /help lists commands grouped by the seven categories.
 	is := is.New(t)
 	d, _ := startedGame(t)
 
 	resp, err := d.Dispatch(chanCmd("help", "anyone", "game"))
 	is.NoErr(err)
-	// Must mention several known commands.
-	for _, cmd := range []string{"newgame", "join", "start", "order", "status"} {
-		is.Equal(strings.Contains(resp, cmd), true)
+	// All seven category headers must be present.
+	for _, header := range []string{"Setup:", "Movement:", "Retreat:", "Adjustment:", "Info:", "Draw:", "GM:"} {
+		is.Equal(strings.Contains(resp, header), true)
 	}
+	// /nations and /provinces must appear in the Info section.
+	is.Equal(strings.Contains(resp, "nations"), true)
+	is.Equal(strings.Contains(resp, "provinces"), true)
 	t.Logf("Help response length: %d chars", len(resp))
 }
 
 func TestCommand_Help_WithCommand(t *testing.T) {
-	// /help <command> returns detailed usage for that command.
+	// /help order returns a multi-line block with Phase, Access, and Examples sections.
 	is := is.New(t)
 	d, _ := startedGame(t)
 
 	resp, err := d.Dispatch(chanCmd("help", "anyone", "game", "order"))
 	is.NoErr(err)
+	for _, section := range []string{"Phase:", "Access:", "Examples:"} {
+		is.Equal(strings.Contains(resp, section), true)
+	}
 	is.Equal(strings.Contains(resp, "order"), true)
 	t.Logf("Help for 'order': %q", resp)
+}
+
+func TestCommand_Help_Rules(t *testing.T) {
+	// /help rules returns a condensed rules summary.
+	is := is.New(t)
+	d, _ := startedGame(t)
+
+	resp, err := d.Dispatch(chanCmd("help", "anyone", "game", "rules"))
+	is.NoErr(err)
+	is.Equal(strings.Contains(resp, "supply centres"), true)
+	is.Equal(strings.Contains(resp, "phase"), true)
+	t.Logf("Help rules length: %d chars", len(resp))
+}
+
+// ---------------------------------------------------------------------------
+// /nations — reference command (any phase, anyone)
+// ---------------------------------------------------------------------------
+
+func TestCommand_Nations_NoArgs(t *testing.T) {
+	// /nations lists all 7 nations with abbreviations and home SC codes.
+	is := is.New(t)
+	d, _ := startedGame(t)
+
+	resp, err := d.Dispatch(chanCmd("nations", "anyone", "game"))
+	is.NoErr(err)
+	for _, name := range []string{"England", "France", "Germany", "Italy", "Austria", "Russia", "Turkey"} {
+		is.Equal(strings.Contains(resp, name), true)
+	}
+	is.Equal(strings.Contains(resp, "Eng"), true)
+	t.Logf("Nations response length: %d chars", len(resp))
+}
+
+func TestCommand_Nations_WithNation(t *testing.T) {
+	// /nations England shows detail including home SCs and starting units.
+	is := is.New(t)
+	d, _ := startedGame(t)
+
+	resp, err := d.Dispatch(chanCmd("nations", "anyone", "game", "England"))
+	is.NoErr(err)
+	is.Equal(strings.Contains(resp, "Edinburgh"), true)
+	is.Equal(strings.Contains(resp, "F Edinburgh") || strings.Contains(resp, "F London"), true)
+	t.Logf("Nations England: %q", resp)
+}
+
+func TestCommand_Nations_UnknownNation(t *testing.T) {
+	// /nations with an unknown name returns an error.
+	is := is.New(t)
+	d, _ := startedGame(t)
+
+	_, err := d.Dispatch(chanCmd("nations", "anyone", "game", "Gondor"))
+	is.NotNil(err)
+	t.Logf("Unknown nation error: %v", err)
+}
+
+// ---------------------------------------------------------------------------
+// /provinces — reference command (any phase, anyone)
+// ---------------------------------------------------------------------------
+
+func TestCommand_Provinces_NoArgs(t *testing.T) {
+	// /provinces lists all province codes with full names.
+	is := is.New(t)
+	d, _ := startedGame(t)
+
+	resp, err := d.Dispatch(chanCmd("provinces", "anyone", "game"))
+	is.NoErr(err)
+	is.Equal(strings.Contains(resp, "vie"), true)
+	is.Equal(strings.Contains(resp, "Vienna"), true)
+	t.Logf("Provinces response length: %d chars", len(resp))
+}
+
+func TestCommand_Provinces_WithNation(t *testing.T) {
+	// /provinces Austria filters to Austria's home SCs.
+	is := is.New(t)
+	d, _ := startedGame(t)
+
+	resp, err := d.Dispatch(chanCmd("provinces", "anyone", "game", "Austria"))
+	is.NoErr(err)
+	for _, code := range []string{"vie", "tri", "bud"} {
+		is.Equal(strings.Contains(resp, code), true)
+	}
+	t.Logf("Provinces Austria: %q", resp)
 }
 
 // ---------------------------------------------------------------------------

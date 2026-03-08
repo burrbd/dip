@@ -34,7 +34,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
 - [x] Story 9b — Unit Overlay: Draw Armies and Fleets on the Map
 - [x] Story 9c — Real SVG Rasterisation (oksvg + rasterx)
-- [ ] Story 9d — Enhanced Help & Reference Commands
+- [x] Story 9d — Enhanced Help & Reference Commands
 - [ ] Story 9e — Local QA REPL
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter

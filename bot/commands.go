@@ -7,6 +7,7 @@ package bot
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,9 @@ import (
 	"github.com/burrbd/dip/engine"
 	"github.com/burrbd/dip/events"
 	"github.com/burrbd/dip/session"
+	"github.com/zond/godip"
+	"github.com/zond/godip/variants/classical"
+	"github.com/zond/godip/variants/classical/start"
 )
 
 // classicalNations is the set of valid nation names in the classical variant.
@@ -105,6 +109,10 @@ func (d *Dispatcher) Dispatch(cmd Command) (string, error) {
 		return d.handleMap(cmd)
 	case "help":
 		return d.handleHelp(cmd)
+	case "nations":
+		return d.handleNations(cmd)
+	case "provinces":
+		return d.handleProvinces(cmd)
 	case "draw":
 		return d.handleDraw(cmd)
 	case "concede":
@@ -723,63 +731,469 @@ func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 	return "Map posted.", nil
 }
 
-// commandHelp maps command names to their help text.
-var commandHelp = map[string]string{
-	"newgame":       "/newgame — Start a new game in this channel. You become the GM.",
-	"join":          "/join <nation> — Join the game as a nation (e.g. England, France).",
-	"start":         "/start — Start the game (GM only). Requires 2–7 players.",
-	"order":         "/order <order-text> — Submit a movement order (DM only, Movement phase).",
-	"orders":        "/orders — List your staged orders for the current phase (DM only).",
-	"clear":         "/clear [order] — Clear all staged orders or a specific one (DM only).",
-	"submit":        "/submit — Finalise and submit your orders (DM only, Movement phase).",
-	"retreat":       "/retreat <unit_type> <source> <destination> — Retreat a dislodged unit (DM only, Retreat phase).",
-	"disband":       "/disband <unit_type> <province> — Disband a unit (DM only, Retreat or Adjustment phase).",
-	"build":         "/build <unit_type> <province> — Build a unit (DM only, Adjustment phase).",
-	"waive":         "/waive — Waive a build slot (DM only, Adjustment phase).",
-	"status":        "/status — Show current phase, SC counts, and submission status.",
-	"history":       "/history <turn> — Show adjudication results for a past turn (e.g. /history Spring 1901).",
-	"map":           "/map [territory [n]] — Post the board map. With args, highlights territory and all provinces within n hops.",
-	"help":          "/help [command] — List all commands or show help for a specific command.",
-	"draw":          "/draw — Propose a draw; subsequent /draw calls from other nations are yes votes.",
-	"concede":       "/concede — Concede the game immediately.",
-	"pause":         "/pause — Pause the phase deadline timer (GM only).",
-	"resume":        "/resume — Resume a paused deadline timer (GM only).",
-	"extend":        "/extend <duration> — Extend the current deadline (GM only, e.g. /extend 2h).",
-	"force-resolve": "/force-resolve — Resolve the current phase immediately (GM only).",
-	"boot":          "/boot <nation> — Remove a player from the game (GM only).",
-	"replace":       "/replace <nation> <user> — Transfer a nation to a new player (GM only).",
+// commandDetail holds the structured help text for a single command.
+type commandDetail struct {
+	usage       string
+	description string
+	phase       string
+	access      string
+	examples    []string
 }
 
-// commandList defines the canonical display order for /help.
+// commandDetails maps command names to their detailed help information.
+var commandDetails = map[string]commandDetail{
+	"newgame": {
+		usage:       "/newgame",
+		description: "Start a new game in this channel. You become the GM.",
+		phase:       "Any (pre-game)",
+		access:      "Anyone",
+		examples:    []string{"/newgame"},
+	},
+	"join": {
+		usage:       "/join <nation>",
+		description: "Join the game as the specified nation.",
+		phase:       "Any (pre-game)",
+		access:      "Anyone",
+		examples:    []string{"/join England", "/join France", "/join Austria"},
+	},
+	"start": {
+		usage:       "/start",
+		description: "Start the game. Requires 2–7 players to have joined.",
+		phase:       "Any (pre-game)",
+		access:      "GM",
+		examples:    []string{"/start"},
+	},
+	"order": {
+		usage:       "/order <order-text>",
+		description: "Submit a movement order for your nation.",
+		phase:       "Movement",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/order A Vie-Bud", "/order F Lon-NTH", "/order A Par S A Mar-Bur"},
+	},
+	"orders": {
+		usage:       "/orders",
+		description: "List your staged orders for the current phase.",
+		phase:       "Movement",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/orders"},
+	},
+	"clear": {
+		usage:       "/clear [order]",
+		description: "Clear all staged orders or remove a specific one.",
+		phase:       "Movement",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/clear", "/clear A Vie-Bud"},
+	},
+	"submit": {
+		usage:       "/submit",
+		description: "Finalise and submit your orders. If all nations submit, the phase resolves immediately.",
+		phase:       "Movement",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/submit"},
+	},
+	"retreat": {
+		usage:       "/retreat <unit_type> <source> <destination>",
+		description: "Retreat a dislodged unit to a valid adjacent province.",
+		phase:       "Retreat",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/retreat F Tri Adr", "/retreat A Bur Par"},
+	},
+	"disband": {
+		usage:       "/disband <unit_type> <province>",
+		description: "Disband a unit. In Retreat phase disbands a dislodged unit; in Adjustment phase removes an excess unit.",
+		phase:       "Retreat or Adjustment",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/disband F Tri", "/disband A Mun"},
+	},
+	"build": {
+		usage:       "/build <unit_type> <province>",
+		description: "Build a new unit in a home supply centre.",
+		phase:       "Adjustment",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/build F Lon", "/build A Ber"},
+	},
+	"waive": {
+		usage:       "/waive",
+		description: "Waive one available build slot.",
+		phase:       "Adjustment",
+		access:      "Own nation (DM only)",
+		examples:    []string{"/waive"},
+	},
+	"status": {
+		usage:       "/status",
+		description: "Show current phase, supply centre counts, and order submission status per nation.",
+		phase:       "Any",
+		access:      "Anyone",
+		examples:    []string{"/status"},
+	},
+	"history": {
+		usage:       "/history <turn>",
+		description: "Show adjudication results for a past turn.",
+		phase:       "Any",
+		access:      "Anyone",
+		examples:    []string{"/history Spring 1901", "/history Fall 1902"},
+	},
+	"map": {
+		usage:       "/map [territory [n]]",
+		description: "Post the board map. With territory and n, highlights that province and all within n hops.",
+		phase:       "Any",
+		access:      "Anyone",
+		examples:    []string{"/map", "/map Vienna 1", "/map vie 2"},
+	},
+	"help": {
+		usage:       "/help [command|rules]",
+		description: "List all commands grouped by category, show detailed help for a command, or display game rules.",
+		phase:       "Any",
+		access:      "Anyone",
+		examples:    []string{"/help", "/help order", "/help rules"},
+	},
+	"nations": {
+		usage:       "/nations [nation]",
+		description: "List all classical powers with abbreviations and home SCs, or show detail for one nation.",
+		phase:       "Any",
+		access:      "Anyone",
+		examples:    []string{"/nations", "/nations England", "/nations Eng"},
+	},
+	"provinces": {
+		usage:       "/provinces [nation]",
+		description: "List all province codes and full names, or filter to a nation's home supply centres.",
+		phase:       "Any",
+		access:      "Anyone",
+		examples:    []string{"/provinces", "/provinces Austria", "/provinces Aus"},
+	},
+	"draw": {
+		usage:       "/draw",
+		description: "Propose a draw, or vote yes on an active draw proposal. Game ends when all nations agree.",
+		phase:       "Any",
+		access:      "Own nation",
+		examples:    []string{"/draw"},
+	},
+	"concede": {
+		usage:       "/concede",
+		description: "Concede the game immediately.",
+		phase:       "Any",
+		access:      "Own nation",
+		examples:    []string{"/concede"},
+	},
+	"pause": {
+		usage:       "/pause",
+		description: "Pause the phase deadline timer.",
+		phase:       "Any",
+		access:      "GM",
+		examples:    []string{"/pause"},
+	},
+	"resume": {
+		usage:       "/resume",
+		description: "Resume a paused deadline timer.",
+		phase:       "Any",
+		access:      "GM",
+		examples:    []string{"/resume"},
+	},
+	"extend": {
+		usage:       "/extend <duration>",
+		description: "Extend the current deadline by the given duration (e.g. 2h, 30m).",
+		phase:       "Any",
+		access:      "GM",
+		examples:    []string{"/extend 2h", "/extend 30m"},
+	},
+	"force-resolve": {
+		usage:       "/force-resolve",
+		description: "Resolve the current phase immediately without waiting for the deadline.",
+		phase:       "Any",
+		access:      "GM",
+		examples:    []string{"/force-resolve"},
+	},
+	"boot": {
+		usage:       "/boot <nation>",
+		description: "Remove a player from the game. Their units receive NMR orders going forward.",
+		phase:       "Any",
+		access:      "GM",
+		examples:    []string{"/boot England"},
+	},
+	"replace": {
+		usage:       "/replace <nation> <user>",
+		description: "Transfer a nation to a new player.",
+		phase:       "Any",
+		access:      "GM",
+		examples:    []string{"/replace England newplayer"},
+	},
+}
+
+// helpCategories defines the seven categories and their command members in display order.
+var helpCategories = []struct {
+	name     string
+	commands []string
+}{
+	{"Setup", []string{"newgame", "join", "start"}},
+	{"Movement", []string{"order", "orders", "clear", "submit"}},
+	{"Retreat", []string{"retreat", "disband"}},
+	{"Adjustment", []string{"build", "disband", "waive"}},
+	{"Info", []string{"status", "history", "map", "help", "nations", "provinces"}},
+	{"Draw", []string{"draw", "concede"}},
+	{"GM", []string{"pause", "resume", "extend", "force-resolve", "boot", "replace"}},
+}
+
+// commandList defines the canonical display order for /help (used for coverage checks).
 var commandList = []string{
 	"newgame", "join", "start",
 	"order", "orders", "clear", "submit",
 	"retreat", "disband", "build", "waive",
-	"status", "history", "map", "help",
+	"status", "history", "map", "help", "nations", "provinces",
 	"draw", "concede",
 	"pause", "resume", "extend", "force-resolve", "boot", "replace",
 }
 
-// handleHelp processes /help [command] — lists all commands or shows detailed
-// usage for a specific command.
+// helpRules is the condensed game rules overview returned by /help rules.
+const helpRules = `Diplomacy — Quick Rules
+
+Powers: Austria, England, France, Germany, Italy, Russia, Turkey (7 classical powers)
+Win condition: Control 18 of 34 supply centres (SCs).
+
+Phase sequence (repeating):
+  Spring Movement → Spring Retreat → Fall Movement → Fall Retreat → Winter Adjustment → repeat
+
+Orders (Movement phase, via DM):
+  Move:         A Vie-Bud         (army in Vienna moves to Budapest)
+  Hold:         A Vie H           (army holds position)
+  Support hold: A Tri S A Vie     (Trieste supports Vienna's hold)
+  Support move: A Tri S A Vie-Bud (Trieste supports Vienna's attack)
+  Convoy:       F ADR C A Vie-Gre (fleet convoyes army across sea)
+
+NMR (No Moves Received): unsubmitted orders become holds; unordered retreat units
+are auto-disbanded; unordered build slots are waived.
+
+Draw: any player may propose a draw with /draw; all remaining nations must agree
+with /draw for the game to end in a draw.
+Concede: a player may end the game immediately with /concede.`
+
+// handleHelp processes /help [command|rules] — lists all commands grouped by category,
+// shows detailed usage for a specific command, or returns the rules overview.
 func (d *Dispatcher) handleHelp(cmd Command) (string, error) {
 	if len(cmd.Args) == 0 {
 		var sb strings.Builder
-		fmt.Fprintln(&sb, "Available commands:")
-		for _, name := range commandList {
-			fmt.Fprintf(&sb, "  %s\n", commandHelp[name])
+		for _, cat := range helpCategories {
+			fmt.Fprintf(&sb, "%s:", cat.name)
+			cmds := make([]string, 0, len(cat.commands))
+			for _, c := range cat.commands {
+				cmds = append(cmds, "/"+c)
+			}
+			fmt.Fprintf(&sb, "  %s\n", strings.Join(cmds, ", "))
 		}
 		return strings.TrimRight(sb.String(), "\n"), nil
 	}
 
-	name := cmd.Args[0]
-	if strings.HasPrefix(name, "/") {
-		name = name[1:]
+	arg := cmd.Args[0]
+	if strings.HasPrefix(arg, "/") {
+		arg = arg[1:]
 	}
-	if text, ok := commandHelp[name]; ok {
-		return text, nil
+
+	if arg == "rules" {
+		return helpRules, nil
 	}
-	return "", fmt.Errorf("bot: unknown command %q; use /help for a list", cmd.Args[0])
+
+	det, ok := commandDetails[arg]
+	if !ok {
+		return "", fmt.Errorf("bot: unknown command %q; use /help for a list", cmd.Args[0])
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s\n", det.usage)
+	fmt.Fprintf(&sb, "  %s\n", det.description)
+	fmt.Fprintf(&sb, "  Phase:   %s\n", det.phase)
+	fmt.Fprintf(&sb, "  Access:  %s\n", det.access)
+	fmt.Fprintf(&sb, "  Examples:\n")
+	for _, ex := range det.examples {
+		fmt.Fprintf(&sb, "    %s\n", ex)
+	}
+	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// nationInfo holds static data about one classical power.
+type nationInfo struct {
+	name       string
+	abbrev     string
+	homeSCs    []string // province codes (lowercase), sorted
+	startUnits []string // e.g. "F Edinburgh", "A Liverpool"
+}
+
+// abbrevToNation maps 3-letter abbreviations (lowercase) to full nation names.
+var abbrevToNation = map[string]string{
+	"eng": "England",
+	"fra": "France",
+	"ger": "Germany",
+	"ita": "Italy",
+	"aus": "Austria",
+	"rus": "Russia",
+	"tur": "Turkey",
+}
+
+// buildNationInfo constructs the nationInfo table from godip classical data.
+// This is called once and cached.
+func buildNationInfo() []nationInfo {
+	scs := start.SupplyCenters()
+	units := start.Units()
+	longNames := classical.ClassicalVariant.ProvinceLongNames
+
+	// Collect home SCs and starting units per nation.
+	homeSCsMap := make(map[godip.Nation][]string)
+	for prov, nation := range scs {
+		homeSCsMap[nation] = append(homeSCsMap[nation], string(prov))
+	}
+
+	startUnitsMap := make(map[godip.Nation][]string)
+	for prov, unit := range units {
+		utype := "A"
+		if unit.Type == godip.Fleet {
+			utype = "F"
+		}
+		// Use the base province for the long name (strip /sc, /nc suffixes).
+		baseProv := strings.Split(string(prov), "/")[0]
+		longName := longNames[godip.Province(baseProv)]
+		startUnitsMap[unit.Nation] = append(startUnitsMap[unit.Nation], utype+" "+longName)
+	}
+
+	orderedNations := []string{"England", "France", "Germany", "Italy", "Austria", "Russia", "Turkey"}
+	abbrevs := map[string]string{
+		"England": "Eng", "France": "Fra", "Germany": "Ger",
+		"Italy": "Ita", "Austria": "Aus", "Russia": "Rus", "Turkey": "Tur",
+	}
+
+	result := make([]nationInfo, 0, len(orderedNations))
+	for _, name := range orderedNations {
+		n := godip.Nation(name)
+		scsForNation := homeSCsMap[n]
+		sort.Strings(scsForNation)
+		unitsForNation := startUnitsMap[n]
+		sort.Strings(unitsForNation)
+		result = append(result, nationInfo{
+			name:       name,
+			abbrev:     abbrevs[name],
+			homeSCs:    scsForNation,
+			startUnits: unitsForNation,
+		})
+	}
+	return result
+}
+
+// nationInfoTable is the lazily initialised nation data table.
+var nationInfoTable []nationInfo
+
+// getNationInfoTable returns the singleton nation info table, building it once.
+func getNationInfoTable() []nationInfo {
+	if nationInfoTable == nil {
+		nationInfoTable = buildNationInfo()
+	}
+	return nationInfoTable
+}
+
+// resolveNation returns the full nation name for a given input (full name or
+// abbreviation, case-insensitive). Returns empty string if not found.
+func resolveNation(input string) string {
+	// Try full name (title-cased).
+	titled := strings.Title(strings.ToLower(input)) //nolint:staticcheck
+	if classicalNations[titled] {
+		return titled
+	}
+	// Try abbreviation.
+	abbrev := strings.ToLower(input)
+	if full, ok := abbrevToNation[abbrev]; ok {
+		return full
+	}
+	return ""
+}
+
+// handleNations processes /nations [nation] — lists all classical powers or
+// shows detail for one nation.
+func (d *Dispatcher) handleNations(cmd Command) (string, error) {
+	table := getNationInfoTable()
+	longNames := classical.ClassicalVariant.ProvinceLongNames
+
+	if len(cmd.Args) == 0 {
+		// Table of all nations.
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "%-10s %-7s %s\n", "Nation", "Abbrev", "Home SCs")
+		for _, ni := range table {
+			// Format home SCs as "Edinburgh (edi), London (lon), ..."
+			scParts := make([]string, 0, len(ni.homeSCs))
+			for _, sc := range ni.homeSCs {
+				longName := longNames[godip.Province(sc)]
+				scParts = append(scParts, fmt.Sprintf("%s (%s)", longName, sc))
+			}
+			fmt.Fprintf(&sb, "%-10s %-7s %s\n", ni.name, ni.abbrev, strings.Join(scParts, ", "))
+		}
+		return strings.TrimRight(sb.String(), "\n"), nil
+	}
+
+	// Detail for one nation.
+	nationName := resolveNation(strings.Join(cmd.Args, " "))
+	if nationName == "" {
+		return "", fmt.Errorf("bot: unknown nation %q; valid names: Austria (Aus), England (Eng), France (Fra), Germany (Ger), Italy (Ita), Russia (Rus), Turkey (Tur)", strings.Join(cmd.Args, " "))
+	}
+
+	var ni nationInfo
+	for _, n := range table {
+		if n.name == nationName {
+			ni = n
+			break
+		}
+	}
+
+	// Format home SCs.
+	scParts := make([]string, 0, len(ni.homeSCs))
+	for _, sc := range ni.homeSCs {
+		longName := longNames[godip.Province(sc)]
+		scParts = append(scParts, fmt.Sprintf("%s (%s)", longName, sc))
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s (%s)\n", ni.name, ni.abbrev)
+	fmt.Fprintf(&sb, "  Home SCs:       %s\n", strings.Join(scParts, ", "))
+	fmt.Fprintf(&sb, "  Starting units: %s\n", strings.Join(ni.startUnits, ", "))
+	fmt.Fprintf(&sb, "  Win condition:  Control 18 of 34 supply centres")
+	return sb.String(), nil
+}
+
+// handleProvinces processes /provinces [nation] — lists all province codes with
+// full names, or filters to a nation's home SCs.
+func (d *Dispatcher) handleProvinces(cmd Command) (string, error) {
+	longNames := classical.ClassicalVariant.ProvinceLongNames
+
+	if len(cmd.Args) == 0 {
+		// Full alphabetical list.
+		codes := make([]string, 0, len(longNames))
+		for prov := range longNames {
+			codes = append(codes, string(prov))
+		}
+		sort.Strings(codes)
+
+		var sb strings.Builder
+		fmt.Fprintln(&sb, "Province reference (Classical Diplomacy):")
+		for _, code := range codes {
+			fmt.Fprintf(&sb, "  %-7s — %s\n", code, longNames[godip.Province(code)])
+		}
+		return strings.TrimRight(sb.String(), "\n"), nil
+	}
+
+	// Filter to home SCs for the given nation.
+	nationName := resolveNation(strings.Join(cmd.Args, " "))
+	if nationName == "" {
+		return "", fmt.Errorf("bot: unknown nation %q; valid names: Austria (Aus), England (Eng), France (Fra), Germany (Ger), Italy (Ita), Russia (Rus), Turkey (Tur)", strings.Join(cmd.Args, " "))
+	}
+
+	scs := start.SupplyCenters()
+	var codes []string
+	for prov, nation := range scs {
+		if string(nation) == nationName {
+			codes = append(codes, string(prov))
+		}
+	}
+	sort.Strings(codes)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "%s home provinces:\n", nationName)
+	for _, code := range codes {
+		fmt.Fprintf(&sb, "  %-7s — %s\n", code, longNames[godip.Province(code)])
+	}
+	return strings.TrimRight(sb.String(), "\n"), nil
 }
 
 // handleDraw processes /draw — proposes a draw or casts a yes vote on an

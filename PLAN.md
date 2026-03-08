@@ -27,7 +27,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 4 — Bot Command Router + Game Setup
 - [x] Story 5 — Movement Phase Commands
 - [x] Story 6 — Retreat & Adjustment Commands
-- [ ] Story 6a — Happy-path Functional Tests for Retreat & Adjustment Commands
+- [x] Story 6a — Happy-path Functional Tests for Retreat & Adjustment Commands
 - [x] Story 7 — Info Commands
 - [x] Story 8 — Draw & GM Commands
 - [x] Story 9 — Map Rendering

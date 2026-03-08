@@ -1777,11 +1777,17 @@ func TestDispatchHelp_ListsAllCommands(t *testing.T) {
 
 	resp, err := d.Dispatch(Command{Name: "help", ChannelID: "chan1", UserID: "u1"})
 	is.NoErr(err)
-	if !containsStr(resp, "/newgame") {
-		t.Errorf("expected /newgame in help output, got: %q", resp)
+	// New grouped format: category headers present.
+	for _, header := range []string{"Setup:", "Movement:", "Retreat:", "Adjustment:", "Info:", "Draw:", "GM:"} {
+		if !containsStr(resp, header) {
+			t.Errorf("expected category header %q in help output, got: %q", header, resp)
+		}
 	}
-	if !containsStr(resp, "/start") {
-		t.Errorf("expected /start in help output, got: %q", resp)
+	// Key commands should appear.
+	for _, cmd := range []string{"newgame", "start", "order", "nations", "provinces"} {
+		if !containsStr(resp, cmd) {
+			t.Errorf("expected /%s in help output, got: %q", cmd, resp)
+		}
 	}
 }
 
@@ -1792,6 +1798,12 @@ func TestDispatchHelp_ShowsSpecificCommand(t *testing.T) {
 
 	resp, err := d.Dispatch(Command{Name: "help", Args: []string{"order"}, ChannelID: "chan1", UserID: "u1"})
 	is.NoErr(err)
+	// The detailed block includes the usage line, Phase, Access, and Examples fields.
+	for _, section := range []string{"Phase:", "Access:", "Examples:"} {
+		if !containsStr(resp, section) {
+			t.Errorf("expected section %q in /help order output, got: %q", section, resp)
+		}
+	}
 	if !containsStr(resp, "/order") {
 		t.Errorf("expected /order in help output, got: %q", resp)
 	}
@@ -1809,12 +1821,160 @@ func TestDispatchHelp_ShowsSpecificCommandWithSlash(t *testing.T) {
 	}
 }
 
+func TestDispatchHelp_ShowsRules(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "help", Args: []string{"rules"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	for _, keyword := range []string{"supply centres", "phase"} {
+		if !containsStr(resp, keyword) {
+			t.Errorf("expected %q in /help rules output, got: %q", keyword, resp)
+		}
+	}
+}
+
 func TestDispatchHelp_RejectsUnknownCommand(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 
 	_, err := d.Dispatch(Command{Name: "help", Args: []string{"bogus"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+// ---- /nations ---------------------------------------------------------------
+
+func TestDispatchNations_ListsAllNations(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "nations", ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	for _, name := range []string{"England", "France", "Germany", "Italy", "Austria", "Russia", "Turkey"} {
+		if !containsStr(resp, name) {
+			t.Errorf("expected nation %q in /nations output, got: %q", name, resp)
+		}
+	}
+	// Abbreviations present.
+	for _, abbrev := range []string{"Eng", "Fra", "Ger", "Ita", "Aus", "Rus", "Tur"} {
+		if !containsStr(resp, abbrev) {
+			t.Errorf("expected abbreviation %q in /nations output, got: %q", abbrev, resp)
+		}
+	}
+}
+
+func TestDispatchNations_DetailByFullName(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "nations", Args: []string{"England"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "Edinburgh") {
+		t.Errorf("expected Edinburgh in /nations England output, got: %q", resp)
+	}
+	if !containsStr(resp, "F Edinburgh") || !containsStr(resp, "London") {
+		t.Errorf("expected starting units in /nations England output, got: %q", resp)
+	}
+}
+
+func TestDispatchNations_AbbreviationResolution(t *testing.T) {
+	tests := []struct {
+		abbrev   string
+		expected string
+	}{
+		{"Eng", "England"}, {"eng", "England"},
+		{"Fra", "France"}, {"fra", "France"},
+		{"Ger", "Germany"}, {"ger", "Germany"},
+		{"Ita", "Italy"}, {"ita", "Italy"},
+		{"Aus", "Austria"}, {"aus", "Austria"},
+		{"Rus", "Russia"}, {"rus", "Russia"},
+		{"Tur", "Turkey"}, {"tur", "Turkey"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.abbrev, func(t *testing.T) {
+			is := is.New(t)
+			ch := &mockChannel{}
+			d := newTestDispatcher(ch)
+
+			resp, err := d.Dispatch(Command{Name: "nations", Args: []string{tc.abbrev}, ChannelID: "chan1", UserID: "u1"})
+			is.NoErr(err)
+			if !containsStr(resp, tc.expected) {
+				t.Errorf("expected %q for abbreviation %q, got: %q", tc.expected, tc.abbrev, resp)
+			}
+		})
+	}
+}
+
+func TestDispatchNations_UnknownNation(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "nations", Args: []string{"Gondor"}, ChannelID: "chan1", UserID: "u1"})
+	is.Err(err)
+}
+
+// ---- /provinces -------------------------------------------------------------
+
+func TestDispatchProvinces_ListsAll(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "provinces", ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	for _, code := range []string{"vie", "lon", "par"} {
+		if !containsStr(resp, code) {
+			t.Errorf("expected province %q in /provinces output, got: %q", code, resp)
+		}
+	}
+	for _, name := range []string{"Vienna", "London", "Paris"} {
+		if !containsStr(resp, name) {
+			t.Errorf("expected %q in /provinces output, got: %q", name, resp)
+		}
+	}
+}
+
+func TestDispatchProvinces_FiltersByNation(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "provinces", Args: []string{"Austria"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	for _, code := range []string{"bud", "tri", "vie"} {
+		if !containsStr(resp, code) {
+			t.Errorf("expected province %q in /provinces Austria output, got: %q", code, resp)
+		}
+	}
+	// Should not contain English provinces.
+	if containsStr(resp, "lon") {
+		t.Errorf("expected London NOT to appear in /provinces Austria output, got: %q", resp)
+	}
+}
+
+func TestDispatchProvinces_FiltersByAbbreviation(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	resp, err := d.Dispatch(Command{Name: "provinces", Args: []string{"Aus"}, ChannelID: "chan1", UserID: "u1"})
+	is.NoErr(err)
+	if !containsStr(resp, "vie") {
+		t.Errorf("expected 'vie' in /provinces Aus output, got: %q", resp)
+	}
+}
+
+func TestDispatchProvinces_UnknownNation(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+
+	_, err := d.Dispatch(Command{Name: "provinces", Args: []string{"Gondor"}, ChannelID: "chan1", UserID: "u1"})
 	is.Err(err)
 }
 

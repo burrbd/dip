@@ -34,6 +34,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
 - [x] Story 9b — Unit Overlay: Draw Armies and Fleets on the Map
 - [x] Story 9c — Real SVG Rasterisation (oksvg + rasterx)
+- [ ] Story 9d — Local QA REPL
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -461,6 +462,38 @@ go mod vendor
   not the stub). This test is skipped if oksvg errors on the test SVG.
 - All existing tests continue to pass; `go test -v -cover -race ./...` at 100%
   for `dipmap`.
+
+---
+
+### Story 9d — Local QA REPL
+
+**Goal:** Add a standalone `go run ./cmd/qabot` entry point for end-to-end manual QA of the
+full bot layer without any external platform. All state is held in memory; players are
+switched with a `/as <Nation|gm>` meta-command; phases are advanced manually with
+`/force-resolve`.
+
+See [`PLAN_QA.md`](PLAN_QA.md) for the full implementation plan, file layout, player/userID
+conventions, and edge-case notes.
+
+**Files:** `platform/local/channel.go`, `platform/local/notifier.go`, `cmd/qabot/main.go`
+
+**Acceptance criteria:**
+- `go build ./cmd/qabot` succeeds with no errors and no new external dependencies
+- `go run ./cmd/qabot` starts a readline REPL with prompt `[gm] > `
+- `/as <Nation|gm>` switches the active player; subsequent commands are dispatched with that
+  player's `UserID` and correct DM/channel routing
+- DM commands (`order`, `orders`, `clear`, `submit`, `retreat`, `disband`, `build`, `waive`)
+  are dispatched with `IsDM=true`, `ChannelID="dm_"+activeUser`, `GameChannelID="local-game"`
+- After each dispatch, new channel messages, DMs for the active player, and any map images are
+  printed; map PNGs are written to temp files and their paths printed
+- The full game flow works end-to-end: `/newgame` → `/join` × 2–7 nations → `/start` →
+  `/order` → `/force-resolve` → `/map`
+- Authorization is correctly enforced: `/order` from `"gm"` returns a "not a player" error;
+  `/force-resolve` from a nation user returns a "GM only" error
+- `platform/local` has unit tests covering thread-safe `Post`/`History`, `SendDM`/`DMHistory`,
+  `PostImage`, and cursor helpers; `go test -v -cover -race ./...` passes
+- No modifications to any existing package (`engine/`, `events/`, `session/`, `bot/`,
+  `dipmap/`, `platform/slack/`, `platform/telegram/`)
 
 ---
 

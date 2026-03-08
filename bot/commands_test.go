@@ -983,13 +983,13 @@ func TestAllNationsSubmitted_SkipsNonOrderSubmittedEvents(t *testing.T) {
 // ---- helpers for retreat/adjustment sessions --------------------------------
 
 // makeRetreatSession creates a session in the Retreat phase with one player (u1→England).
-// The engine has a dislodged Austria army at "Vie" belonging to England.
+// The engine has a dislodged unit at "vie" (lowercase, matching godip's province keys) belonging to England.
 func makeRetreatSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
 	players := map[string]string{"u1": "England"}
 	eng := &mockEngine{
 		phase:      "Spring 1901 Retreat",
 		dump:       []byte(`{}`),
-		dislodgeds: map[string]string{"Vie": "England"},
+		dislodgeds: map[string]string{"vie": "England"},
 	}
 	sess := session.New(ch, gameChID, "gm1", "Spring 1901 Retreat", players, 0, eng, &mockNotifier{})
 	d.sessions[gameChID] = sess
@@ -1063,11 +1063,11 @@ func TestDispatchRetreat_RejectsWrongNationDislodged(t *testing.T) {
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 	sess := makeRetreatSession(d, ch, "chan1")
-	// Override dislodgeds so Vie belongs to France, not England.
+	// Override dislodgeds so vie belongs to France, not England.
 	sess.Eng = &mockEngine{
 		phase:      "Spring 1901 Retreat",
 		dump:       []byte(`{}`),
-		dislodgeds: map[string]string{"Vie": "France"},
+		dislodgeds: map[string]string{"vie": "France"},
 	}
 
 	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
@@ -1079,11 +1079,11 @@ func TestDispatchRetreat_RejectsNoDislodgedAtProvince(t *testing.T) {
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 	sess := makeRetreatSession(d, ch, "chan1")
-	// No dislodged unit at Mun.
+	// No dislodged unit at mun.
 	sess.Eng = &mockEngine{
 		phase:      "Spring 1901 Retreat",
 		dump:       []byte(`{}`),
-		dislodgeds: map[string]string{"Vie": "England"},
+		dislodgeds: map[string]string{"vie": "England"},
 	}
 
 	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Mun", "Boh"))
@@ -1098,7 +1098,7 @@ func TestDispatchRetreat_RejectsEngineError(t *testing.T) {
 	sess.Eng = &mockEngine{
 		phase:      "Spring 1901 Retreat",
 		dump:       []byte(`{}`),
-		dislodgeds: map[string]string{"Vie": "England"},
+		dislodgeds: map[string]string{"vie": "England"},
 		orderErr:   errors.New("invalid retreat destination"),
 	}
 
@@ -1118,7 +1118,17 @@ func TestDispatchRetreat_StagesRetreatOrder(t *testing.T) {
 		t.Error("expected non-empty response")
 	}
 	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "A Vie R Bud")
+	is.Equal(sess.StagedOrders["England"][0], "A vie-Bud")
+}
+
+func TestDispatchRetreat_WriteDMError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmPostErr: errors.New("dm write error")}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.Err(err)
 }
 
 // ---- /disband ---------------------------------------------------------------
@@ -1179,7 +1189,7 @@ func TestDispatchDisband_RejectsWrongNationDislodgedInRetreat(t *testing.T) {
 	sess.Eng = &mockEngine{
 		phase:      "Spring 1901 Retreat",
 		dump:       []byte(`{}`),
-		dislodgeds: map[string]string{"Vie": "France"},
+		dislodgeds: map[string]string{"vie": "France"},
 	}
 
 	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
@@ -1194,7 +1204,7 @@ func TestDispatchDisband_RejectsEngineError(t *testing.T) {
 	sess.Eng = &mockEngine{
 		phase:      "Spring 1901 Retreat",
 		dump:       []byte(`{}`),
-		dislodgeds: map[string]string{"Vie": "England"},
+		dislodgeds: map[string]string{"vie": "England"},
 		orderErr:   errors.New("bad disband"),
 	}
 
@@ -1214,7 +1224,7 @@ func TestDispatchDisband_StagesDisbandInRetreatPhase(t *testing.T) {
 		t.Error("expected non-empty response")
 	}
 	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "A Vie D")
+	is.Equal(sess.StagedOrders["England"][0], "A vie disband")
 }
 
 func TestDispatchDisband_StagesDisbandInAdjustmentPhase(t *testing.T) {
@@ -1229,7 +1239,27 @@ func TestDispatchDisband_StagesDisbandInAdjustmentPhase(t *testing.T) {
 		t.Error("expected non-empty response")
 	}
 	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "A Lon D")
+	is.Equal(sess.StagedOrders["England"][0], "A lon disband")
+}
+
+func TestDispatchDisband_WriteDMErrorInRetreat(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmPostErr: errors.New("dm write error")}
+	d := newTestDispatcher(ch)
+	makeRetreatSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_WriteDMErrorInAdjustment(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmPostErr: errors.New("dm write error")}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Lon"))
+	is.Err(err)
 }
 
 // ---- /build -----------------------------------------------------------------
@@ -1309,7 +1339,17 @@ func TestDispatchBuild_StagesBuildOrder(t *testing.T) {
 		t.Error("expected non-empty response")
 	}
 	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "A Lon B")
+	is.Equal(sess.StagedOrders["England"][0], "build A Lon")
+}
+
+func TestDispatchBuild_WriteDMError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmPostErr: errors.New("dm write error")}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
+	is.Err(err)
 }
 
 // ---- /waive -----------------------------------------------------------------

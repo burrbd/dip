@@ -350,6 +350,188 @@ func TestCommand_Submit_AllPlayersAdvancesPhase(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase helpers — bring the game to Retreat or Adjustment phase
+// ---------------------------------------------------------------------------
+
+// retreatPhaseGame spins up a full 7-nation game and advances to Fall 1901
+// Retreat with Austria's F Tri dislodged.
+//
+// Scenario (2 turns):
+//   - Spring 1901: Italy A Ven→Tyr (empty), A Rom→Ven (now empty).
+//     No dislodgements → Spring Retreat skipped → Fall 1901 Movement.
+//   - Fall 1901: Italy A Tyr→Tri (attack Trieste), A Ven S A Tyr-Tri.
+//     Venice is adjacent to Trieste, so the support is valid.
+//     Attack strength 2 vs Austria F Tri hold strength 1 → dislodged.
+//     → Fall 1901 Retreat with Austria F Tri dislodged.
+//
+// Austria F Tri's valid retreats: Adr (Adriatic Sea) or Alb (Albania).
+// Tyr is blocked (dislodger came from there); Ven is occupied by Italy A Ven.
+func retreatPhaseGame(t *testing.T) (*bot.Dispatcher, *memChannel) {
+	t.Helper()
+	ch := newMem()
+	d := newDispatcher(ch)
+
+	mustDispatch(t, d, chanCmd("newgame", "gm", "game"))
+	mustDispatch(t, d, chanCmd("join", "u1", "game", "Austria"))
+	mustDispatch(t, d, chanCmd("join", "u2", "game", "England"))
+	mustDispatch(t, d, chanCmd("join", "u3", "game", "France"))
+	mustDispatch(t, d, chanCmd("join", "u4", "game", "Germany"))
+	mustDispatch(t, d, chanCmd("join", "u5", "game", "Italy"))
+	mustDispatch(t, d, chanCmd("join", "u6", "game", "Russia"))
+	mustDispatch(t, d, chanCmd("join", "u7", "game", "Turkey"))
+	mustDispatch(t, d, chanCmd("start", "gm", "game"))
+
+	// Spring 1901 Movement: Italy repositions for a supported attack on Tri.
+	// A Ven → Tyr (empty province adjacent to Tri).
+	// A Rom → Ven (fills vacated Venice, now adjacent to Tri for support).
+	mustDispatch(t, d, dmCmd("order", "u5", "game", "A ven-tyr"))
+	mustDispatch(t, d, dmCmd("order", "u5", "game", "A rom-ven"))
+	// Spring Retreat will be empty (no dislodgements) → auto-skipped to Fall.
+	mustDispatch(t, d, chanCmd("force-resolve", "gm", "game"))
+
+	// Fall 1901 Movement: Italy A Tyr attacks Tri; A Ven (adjacent to Tri)
+	// provides the decisive support.  Austria ≠ Italy, so the support is not
+	// excluded by the "defender's nation forbidden" rule.
+	mustDispatch(t, d, dmCmd("order", "u5", "game", "A tyr-tri"))
+	mustDispatch(t, d, dmCmd("order", "u5", "game", "A ven S A tyr-tri"))
+	mustDispatch(t, d, chanCmd("force-resolve", "gm", "game"))
+	// Fall Retreat: Austria F Tri is dislodged.
+	return d, ch
+}
+
+// adjustmentPhaseGame spins up a full 7-nation game, advances through Spring
+// and Fall 1901 so that England captures Norway and earns one build slot.
+// Returns a dispatcher in Winter 1901 Adjustment phase.
+//
+// Scenario:
+//   - Spring 1901: England submits F lon-nth (all others NMR). No dislodgements
+//     → Spring Retreat skipped → Fall 1901 Movement.
+//   - Fall 1901: England submits F nth-nwy (all others NMR). No dislodgements
+//     → Fall Retreat skipped → Winter 1901 Adjustment.
+//
+// England after Adjustment: 4 SCs (lon, edi, lvp, nwy), 3 units → 1 build slot.
+func adjustmentPhaseGame(t *testing.T) (*bot.Dispatcher, *memChannel) {
+	t.Helper()
+	ch := newMem()
+	d := newDispatcher(ch)
+
+	mustDispatch(t, d, chanCmd("newgame", "gm", "game"))
+	mustDispatch(t, d, chanCmd("join", "u1", "game", "Austria"))
+	mustDispatch(t, d, chanCmd("join", "u2", "game", "England"))
+	mustDispatch(t, d, chanCmd("join", "u3", "game", "France"))
+	mustDispatch(t, d, chanCmd("join", "u4", "game", "Germany"))
+	mustDispatch(t, d, chanCmd("join", "u5", "game", "Italy"))
+	mustDispatch(t, d, chanCmd("join", "u6", "game", "Russia"))
+	mustDispatch(t, d, chanCmd("join", "u7", "game", "Turkey"))
+	mustDispatch(t, d, chanCmd("start", "gm", "game"))
+
+	// Spring 1901 Movement: England moves F Lon to North Sea.
+	mustDispatch(t, d, dmCmd("order", "u2", "game", "F lon-nth"))
+	mustDispatch(t, d, chanCmd("force-resolve", "gm", "game"))
+	// Spring Retreat skipped (no dislodgements) → Fall 1901 Movement.
+
+	// Fall 1901 Movement: England moves F NTH to Norway.
+	mustDispatch(t, d, dmCmd("order", "u2", "game", "F nth-nwy"))
+	mustDispatch(t, d, chanCmd("force-resolve", "gm", "game"))
+	// Fall Retreat skipped (no dislodgements) → Winter 1901 Adjustment.
+
+	return d, ch
+}
+
+// ---------------------------------------------------------------------------
+// Happy-path tests for Retreat / Adjustment commands
+// ---------------------------------------------------------------------------
+
+func TestCommand_Retreat(t *testing.T) {
+	// /retreat happy path: Austria's F Tri retreats to Adr (Adriatic Sea).
+	// Ven is occupied by Italy's A Ven; Tyr is blocked (dislodger came from there).
+	// Expects no error and an OrderSubmitted event recorded in Austria's DM.
+	is := is.New(t)
+	d, ch := retreatPhaseGame(t)
+
+	resp, err := d.Dispatch(dmCmd("retreat", "u1", "game", "F", "tri", "adr"))
+	is.NoErr(err)
+	is.Equal(resp != "", true)
+
+	dmEnvs, err := events.ScanDM(ch, "u1")
+	is.NoErr(err)
+	foundOS := false
+	for _, e := range dmEnvs {
+		if e.Type == events.TypeOrderSubmitted {
+			var os events.OrderSubmitted
+			is.NoErr(json.Unmarshal(e.Payload, &os))
+			is.Equal(os.Nation, "Austria")
+			foundOS = true
+		}
+	}
+	is.Equal(foundOS, true)
+	t.Logf("Retreat: resp=%q", resp)
+}
+
+func TestCommand_Disband_InRetreatPhase(t *testing.T) {
+	// /disband happy path in Retreat phase: Austria's F Tri disbands instead of retreating.
+	// Expects no error and an OrderSubmitted event recorded in Austria's DM.
+	is := is.New(t)
+	d, ch := retreatPhaseGame(t)
+
+	resp, err := d.Dispatch(dmCmd("disband", "u1", "game", "F", "tri"))
+	is.NoErr(err)
+	is.Equal(resp != "", true)
+
+	dmEnvs, err := events.ScanDM(ch, "u1")
+	is.NoErr(err)
+	foundOS := false
+	for _, e := range dmEnvs {
+		if e.Type == events.TypeOrderSubmitted {
+			var os events.OrderSubmitted
+			is.NoErr(json.Unmarshal(e.Payload, &os))
+			is.Equal(os.Nation, "Austria")
+			foundOS = true
+		}
+	}
+	is.Equal(foundOS, true)
+	t.Logf("Disband (retreat phase): resp=%q", resp)
+}
+
+func TestCommand_Build(t *testing.T) {
+	// /build happy path: England builds F Lon in Winter 1901 Adjustment.
+	// England has 4 SCs (lon, edi, lvp, nwy) and 3 units → 1 build slot.
+	// Expects no error and an OrderSubmitted event recorded in England's DM.
+	is := is.New(t)
+	d, ch := adjustmentPhaseGame(t)
+
+	resp, err := d.Dispatch(dmCmd("build", "u2", "game", "F", "lon"))
+	is.NoErr(err)
+	is.Equal(resp != "", true)
+
+	dmEnvs, err := events.ScanDM(ch, "u2")
+	is.NoErr(err)
+	foundOS := false
+	for _, e := range dmEnvs {
+		if e.Type == events.TypeOrderSubmitted {
+			var os events.OrderSubmitted
+			is.NoErr(json.Unmarshal(e.Payload, &os))
+			is.Equal(os.Nation, "England")
+			foundOS = true
+		}
+	}
+	is.Equal(foundOS, true)
+	t.Logf("Build: resp=%q", resp)
+}
+
+func TestCommand_Waive(t *testing.T) {
+	// /waive happy path: England waives its one available build slot.
+	// Expects no error and the waive order to be staged.
+	is := is.New(t)
+	d, _ := adjustmentPhaseGame(t)
+
+	resp, err := d.Dispatch(dmCmd("waive", "u2", "game"))
+	is.NoErr(err)
+	is.Equal(resp != "", true)
+	t.Logf("Waive: resp=%q", resp)
+}
+
+// ---------------------------------------------------------------------------
 // Phase-guard tests for Retreat / Adjustment commands
 // (called in the wrong phase to prove the commands are wired and guarded)
 // ---------------------------------------------------------------------------

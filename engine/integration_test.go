@@ -303,3 +303,35 @@ func TestResolve_SupportedMove_SuccessTrue(t *testing.T) {
 	is.NotNil(parResult)
 	is.Equal(parResult.Success, true)
 }
+
+func TestBuildStateFromSnapshot_SetUnitsError(t *testing.T) {
+	is := is.New(t)
+	ph := classical.NewPhase(1901, godip.Spring, godip.Movement)
+	st := classical.Blank(ph)
+	// Two conflicting coastal entries for Spain cause SetUnit to fail on the
+	// second one regardless of map iteration order: placing "spa" and "spa/nc"
+	// together always triggers a "already at" error via coast resolution.
+	snap := &stateSnapshot{
+		Units: map[godip.Province]godip.Unit{
+			"spa":    {Type: godip.Fleet, Nation: godip.France},
+			"spa/nc": {Type: godip.Army, Nation: godip.France},
+		},
+	}
+	_, err := buildStateFromSnapshot(st, snap)
+	is.Err(err)
+}
+
+func TestBuildStateFromSnapshot_SetDislodgedsError(t *testing.T) {
+	is := is.New(t)
+	ph := classical.NewPhase(1901, godip.Spring, godip.Movement)
+	st := classical.Blank(ph)
+	// Same coastal conflict approach for dislodgeds.
+	snap := &stateSnapshot{
+		Dislodgeds: map[godip.Province]godip.Unit{
+			"spa":    {Type: godip.Fleet, Nation: godip.France},
+			"spa/nc": {Type: godip.Army, Nation: godip.France},
+		},
+	}
+	_, err := buildStateFromSnapshot(st, snap)
+	is.Err(err)
+}

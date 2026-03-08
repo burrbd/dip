@@ -200,7 +200,9 @@ See CLAUDE.md for the full format table.
 | Info | `/map [territory [n]]` | Any | Anyone |
 | Info | `/status` | Any | Anyone |
 | Info | `/history <turn>` | Any | Anyone |
-| Info | `/help [command]` | Any | Anyone |
+| Info | `/help [command\|rules]` | Any | Anyone |
+| Info | `/nations [nation]` | Any | Anyone |
+| Info | `/provinces [nation]` | Any | Anyone |
 | Draw | `/draw` | Any | Own nation |
 | Draw | `/concede` | Any | Own nation |
 | GM | `/pause` | Any | GM |

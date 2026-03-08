@@ -34,7 +34,8 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9a — Mobile Map: Viewport Zoom and Lambda-Safe SVG→PNG
 - [x] Story 9b — Unit Overlay: Draw Armies and Fleets on the Map
 - [x] Story 9c — Real SVG Rasterisation (oksvg + rasterx)
-- [ ] Story 9d — Local QA REPL
+- [ ] Story 9d — Enhanced Help & Reference Commands
+- [ ] Story 9e — Local QA REPL
 - [ ] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -465,7 +466,184 @@ go mod vendor
 
 ---
 
-### Story 9d — Local QA REPL
+### Story 9d — Enhanced Help & Reference Commands
+
+**Goal:** Make the bot self-documenting for new players. Upgrade `/help` to show commands
+grouped by category with multi-line per-command detail (syntax, examples, phase restriction,
+access control) and a `/help rules` sub-topic that summarises Diplomacy game rules. Add two
+new reference commands — `/nations` and `/provinces` — so players can look up country
+abbreviations, home supply centres, and province code mappings without leaving the chat.
+
+**Files:** `bot/commands.go`, `bot/commands_test.go`, `bot/bot_functional_test.go`,
+`ARCHITECTURE.md`
+
+**New commands:** `/nations [nation]`, `/provinces [nation]`
+
+**Enhanced commands:** `/help [command|rules]`
+
+---
+
+#### `/help` upgrade
+
+**`/help` (no args):** outputs commands grouped in seven categories, each with a one-line
+summary. Categories mirror `ARCHITECTURE.md`:
+
+```
+Setup:       /newgame, /join, /start
+Movement:    /order, /orders, /clear, /submit
+Retreat:     /retreat, /disband
+Adjustment:  /build, /disband, /waive
+Info:        /status, /history, /map, /help, /nations, /provinces
+Draw:        /draw, /concede
+GM:          /pause, /resume, /extend, /force-resolve, /boot, /replace
+```
+
+**`/help <command>`:** multi-line block for that command containing:
+- **Usage** — syntax with typed placeholders (`<nation>`, `[n]`, `<order-text>`, etc.)
+- **Description** — one or two sentences explaining what it does
+- **Phase** — which phase(s) it applies to, or "Any"
+- **Access** — who may call it (Anyone / Own nation / GM)
+- **Examples** — 1–3 concrete example invocations
+
+Example output for `/help order`:
+
+```
+/order <order-text>
+  Submit a movement order for your nation.
+  Phase:   Movement
+  Access:  Own nation (DM only)
+  Examples:
+    /order A Vie-Bud
+    /order F Lon-NTH
+    /order A Par S A Mar-Bur
+```
+
+**`/help rules`:** condensed game rules overview covering:
+- The 7 classical powers and win condition (18 of 34 supply centres)
+- Phase sequence (Spring Movement → Spring Retreat → Fall Movement → Fall Retreat → Winter Adjustment → repeat)
+- How orders work (move, hold, support, convoy)
+- NMR behaviour (unsubmitted orders become holds / auto-disbands)
+- Draw and concede mechanics
+
+---
+
+#### `/nations [nation]` — new command
+
+**`/nations` (no args):** table listing all 7 classical powers:
+
+```
+Nation    Abbrev  Home SCs
+England   Eng     Edinburgh (edi), London (lon), Liverpool (lvp)
+France    Fra     Brest (bre), Marseilles (mar), Paris (par)
+Germany   Ger     Berlin (ber), Kiel (kie), Munich (mun)
+Italy     Ita     Naples (nap), Rome (rom), Venice (ven)
+Austria   Aus     Budapest (bud), Trieste (tri), Vienna (vie)
+Russia    Rus     Moscow (mos), Sevastopol (sev), St Petersburg (stp), Warsaw (war)
+Turkey    Tur     Ankara (ank), Constantinople (con), Smyrna (smy)
+```
+
+**`/nations <nation>`** (full name or abbreviation, case-insensitive): detailed block for that
+power:
+
+```
+England (Eng)
+  Home SCs:       Edinburgh (edi), London (lon), Liverpool (lvp)
+  Starting units: F Edinburgh, F London, A Liverpool
+  Win condition:  Control 18 of 34 supply centres
+```
+
+Abbreviation resolution maps `eng → England`, `fra → France`, `ger → Germany`,
+`ita → Italy`, `aus → Austria`, `rus → Russia`, `tur → Turkey` (case-insensitive).
+Unknown name returns an error listing valid names.
+
+---
+
+#### `/provinces [nation]` — new command
+
+**`/provinces` (no args):** alphabetically sorted table of all ~75 province codes and their
+full names, drawn from `classical.ProvinceLongNames` (or the equivalent exported map):
+
+```
+Province reference (Classical Diplomacy):
+  adr — Adriatic Sea
+  aeg — Aegean Sea
+  ank — Ankara
+  ...
+  vie — Vienna
+  wal — Wales
+  war — Warsaw
+  wes — Western Mediterranean
+  yor — Yorkshire
+```
+
+**`/provinces <nation>`** (full name or abbreviation, case-insensitive): filters to the home
+supply centres of that nation (the province codes a new player must know first):
+
+```
+Austria home provinces:
+  bud — Budapest
+  tri — Trieste
+  vie — Vienna
+```
+
+---
+
+#### Data source
+
+Both `/nations` and `/provinces` read directly from the godip classical variant data already
+present in `vendor/`:
+
+- Nations list: `classical.Nations` (`[]godip.Nation`)
+- Home SCs: `start.SupplyCenters()` — filter to entries whose value equals the nation
+- Province long names: `classical.ClassicalVariant.ProvinceLongNames` (`map[godip.Province]string`) —
+  accessible via the exported `ProvinceLongNames` field on the `common.Variant` struct; no mirroring
+  needed
+- Starting units: `start.Units()` (`map[godip.Province]godip.Unit`) — for `/nations <nation>`
+
+---
+
+**Acceptance criteria:**
+
+- `/help` (no args) output is grouped by the seven categories above; each line is a one-line
+  summary; the section headers are present
+- `/help <command>` returns a multi-line block with Usage, Description, Phase, Access, and
+  Examples sections for every command in `commandList` (24 commands + `nations` + `provinces`)
+- `/help rules` returns a plain-text rules summary covering powers, win condition, phase
+  sequence, NMR, and draw
+- `/help <unknown>` returns an error referencing `/help` for the command list (existing
+  behaviour preserved)
+- `/nations` (no args) lists all 7 nations with abbreviation and home SC codes + full names
+- `/nations <nation>` (by full name or abbreviation, case-insensitive) returns the detailed
+  block for that nation including starting units
+- `/nations <unknown>` returns an error listing valid names and abbreviations
+- `/provinces` (no args) lists all province codes with full names, alphabetically sorted
+- `/provinces <nation>` filters to home SCs for that nation
+- `/provinces <unknown>` returns an error listing valid names
+- Both new commands are accessible to any user in any phase (including pre-game)
+- `ARCHITECTURE.md` command table updated to include `/nations` and `/provinces` in the Info
+  category
+- **Functional tests** (build tag `functional`) in `bot/bot_functional_test.go`:
+  - `TestCommand_Help_NoArgs` — verifies output contains all seven category headers
+  - `TestCommand_Help_WithCommand` — verifies `/help order` output contains "Usage", "Phase",
+    "Access", and "Examples" sections
+  - `TestCommand_Help_Rules` — verifies `/help rules` output contains "supply centres" and
+    "phase"
+  - `TestCommand_Nations_NoArgs` — verifies output contains all 7 nation names and "Eng"
+  - `TestCommand_Nations_WithNation` — verifies `/nations England` output contains "Edinburgh"
+    and "F Edinburgh"
+  - `TestCommand_Nations_UnknownNation` — verifies error response for `/nations Gondor`
+  - `TestCommand_Provinces_NoArgs` — verifies output contains "vie" and "Vienna"
+  - `TestCommand_Provinces_WithNation` — verifies `/provinces Austria` output contains "vie",
+    "tri", "bud"
+- **Unit tests** in `bot/commands_test.go`:
+  - Table-driven tests for abbreviation resolution (all 7 abbreviations, case-insensitive)
+  - Table-driven test for `/provinces` filter against a stub province map
+- `go test -v -cover -race ./...` passes at 100% for `bot/`
+- `go test -v -tags functional ./bot/` passes
+
+---
+
+### Story 9e — Local QA REPL
 
 **Goal:** Add a standalone `go run ./cmd/qabot` entry point for end-to-end manual QA of the
 full bot layer without any external platform. All state is held in memory; players are

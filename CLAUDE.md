@@ -107,7 +107,7 @@ access-controlled, and produces the expected event — without mocking the bot o
       rejection test (calling the command in the wrong phase) is acceptable as *additional*
       negative-path coverage but is not a substitute for a happy-path test.
 
-**All 24 commands in ARCHITECTURE.md have functional tests as of Story 9.** The mapping is:
+**All 24 commands in ARCHITECTURE.md have functional tests as of Story 9. Story 9d adds `/nations` and `/provinces`.** The mapping is:
 
 | Command | Test function(s) |
 |---|---|
@@ -125,7 +125,9 @@ access-controlled, and produces the expected event — without mocking the bot o
 | `/status` | `TestCommand_Status` |
 | `/history` | `TestCommand_History_BeforeFirstResolution` |
 | `/map` | `TestCommand_Map_NoArgs`, `TestCommand_Map_WithTerritoryAndRadius` |
-| `/help` | `TestCommand_Help_NoArgs`, `TestCommand_Help_WithCommand` |
+| `/help` | `TestCommand_Help_NoArgs`, `TestCommand_Help_WithCommand`, `TestCommand_Help_Rules` |
+| `/nations` | `TestCommand_Nations_NoArgs`, `TestCommand_Nations_WithNation`, `TestCommand_Nations_UnknownNation` |
+| `/provinces` | `TestCommand_Provinces_NoArgs`, `TestCommand_Provinces_WithNation` |
 | `/draw` | `TestCommand_Draw_ProposesOnFirstCall`, `TestCommand_Draw_AllNationsEndGame` |
 | `/concede` | `TestCommand_Concede` |
 | `/pause` | `TestCommand_Pause` |

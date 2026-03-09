@@ -38,7 +38,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9e — Local QA REPL
 - [x] Story 9f — Map Output: JPEG Encoding + SVG Asset Cache
 - [x] Story 10 — Telegram Platform Adapter
-- [ ] Story 10a — QA Bot: README Documentation
+- [x] Story 10a — QA Bot: README Documentation
 - [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)

@@ -15,7 +15,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
@@ -34,30 +33,14 @@ func jpegEncode(w io.Writer, img image.Image) error {
 	return jpeg.Encode(w, img, &jpeg.Options{Quality: 85})
 }
 
-// classicalSVGOnce guards one-time loading of the style-stripped godip SVG.
-var (
-	classicalSVGOnce  sync.Once
-	classicalSVGBytes []byte
-	classicalSVGErr   error
-)
-
 // loadClassicalSVGWith loads the SVG from assetFn, strips <style> blocks, and
-// returns the resulting bytes. It is the testable core used by classicalSVG.
+// returns the resulting bytes.
 func loadClassicalSVGWith(assetFn func(string) ([]byte, error)) ([]byte, error) {
 	raw, err := assetFn("svg/map.svg")
 	if err != nil {
 		return nil, fmt.Errorf("dipmap: load SVG asset: %w", err)
 	}
 	return stripStyles(raw), nil
-}
-
-// classicalSVG returns the style-stripped godip classical SVG, loading and
-// decompressing it at most once per process lifetime. Thread-safe.
-func classicalSVG() ([]byte, error) {
-	classicalSVGOnce.Do(func() {
-		classicalSVGBytes, classicalSVGErr = loadClassicalSVGWith(classical.Asset)
-	})
-	return classicalSVGBytes, classicalSVGErr
 }
 
 // stripStyles removes all <style>…</style> blocks from svg. oksvg cannot parse
@@ -67,10 +50,8 @@ func stripStyles(svg []byte) []byte {
 }
 
 // Render converts godip's classical SVG map to a JPEG byte slice.
-// It uses the cached style-stripped SVG so classical.Asset decompression
-// only runs once per process.
 func Render(state EngineState) ([]byte, error) {
-	return renderWith(state, classicalSVG)
+	return renderWith(state, func() ([]byte, error) { return loadClassicalSVGWith(classical.Asset) })
 }
 
 // renderWith is the testable core of Render; svgLoader is injected in tests.
@@ -88,10 +69,10 @@ func renderWithLoader(state EngineState, assetFn func(string) ([]byte, error)) (
 	return renderWith(state, func() ([]byte, error) { return loadClassicalSVGWith(assetFn) })
 }
 
-// LoadSVG returns the cached classical SVG map bytes. It is used as the svgFn
+// LoadSVG returns the classical SVG map bytes. It is used as the svgFn
 // in bot.Dispatcher for the territory-zoom rendering path.
 func LoadSVG(_ EngineState) ([]byte, error) {
-	return classicalSVG()
+	return loadClassicalSVGWith(classical.Asset)
 }
 
 // loadSVGWith is the testable core of LoadSVG with an injectable asset loader.

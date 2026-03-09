@@ -606,22 +606,21 @@ func TestCommand_History_BeforeFirstResolution(t *testing.T) {
 }
 
 func TestCommand_Map_NoArgs(t *testing.T) {
-	// /map with no arguments posts the full board PNG to the channel.
+	// /map with no arguments posts the full board JPEG to the channel.
 	is := is.New(t)
 	d, ch := startedGame(t)
 
 	_, err := d.Dispatch(chanCmd("map", "anyone", "game"))
 	is.NoErr(err)
-	// PNG must have been posted (PostImage called).
+	// JPEG must have been posted (PostImage called).
 	is.Equal(len(ch.imgs) > 0, true)
-	// First four bytes must be the PNG magic number.
+	// First three bytes must be the JPEG magic number (FF D8 FF).
 	if len(ch.imgs) > 0 {
 		img := ch.imgs[0]
-		is.Equal(img[0], byte(0x89))
-		is.Equal(img[1], byte('P'))
-		is.Equal(img[2], byte('N'))
-		is.Equal(img[3], byte('G'))
-		t.Logf("PNG posted: %d KB", len(img)/1024)
+		is.Equal(img[0], byte(0xFF))
+		is.Equal(img[1], byte(0xD8))
+		is.Equal(img[2], byte(0xFF))
+		t.Logf("JPEG posted: %d KB", len(img)/1024)
 	}
 }
 
@@ -633,7 +632,7 @@ func TestCommand_Map_WithTerritoryAndRadius(t *testing.T) {
 	_, err := d.Dispatch(chanCmd("map", "anyone", "game", "vie", "1"))
 	is.NoErr(err)
 	is.Equal(len(ch.imgs) > 0, true)
-	t.Logf("Map with territory: PNG %d KB", len(ch.imgs[0])/1024)
+	t.Logf("Map with territory: JPEG %d KB", len(ch.imgs[0])/1024)
 }
 
 func TestCommand_Help_NoArgs(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"image"
-	"image/png"
+	"image/jpeg"
 	"io"
 	"testing"
 
@@ -16,23 +16,69 @@ type stubEngineState struct{}
 
 func (s stubEngineState) Dump() ([]byte, error) { return []byte(`{}`), nil }
 
-// failEncoder is a PNG encoder that always returns an error.
+// failEncoder is an encoder that always returns an error.
 func failEncoder(_ io.Writer, _ image.Image) error { return errors.New("encode fail") }
+
+// assertJPEG checks that result begins with JPEG magic bytes (FF D8 FF).
+func assertJPEG(t *testing.T, result []byte) {
+	t.Helper()
+	if len(result) < 3 {
+		t.Fatalf("expected JPEG bytes, got %d bytes", len(result))
+	}
+	is := is.New(t)
+	is.Equal(result[0], byte(0xFF))
+	is.Equal(result[1], byte(0xD8))
+	is.Equal(result[2], byte(0xFF))
+}
+
+// ---- loadClassicalSVGWith ---------------------------------------------------
+
+func TestLoadClassicalSVGWith_AssetError_ReturnsError(t *testing.T) {
+	is := is.New(t)
+	failLoader := func(string) ([]byte, error) { return nil, errors.New("asset not found") }
+	_, err := loadClassicalSVGWith(failLoader)
+	is.NotNil(err)
+}
+
+func TestLoadClassicalSVGWith_StripsStyleBlocks(t *testing.T) {
+	is := is.New(t)
+	loader := func(string) ([]byte, error) {
+		return []byte(`<svg><style>body{}</style><rect/></svg>`), nil
+	}
+	result, err := loadClassicalSVGWith(loader)
+	is.NoErr(err)
+	if bytes.Contains(result, []byte("<style>")) {
+		t.Error("expected style block to be stripped")
+	}
+}
+
+// ---- renderWith -------------------------------------------------------------
+
+func TestRenderWith_LoaderError_ReturnsError(t *testing.T) {
+	is := is.New(t)
+	_, err := renderWith(stubEngineState{}, func() ([]byte, error) {
+		return nil, errors.New("loader failed")
+	})
+	is.NotNil(err)
+}
+
+func TestRenderWith_Success_ReturnsJPEG(t *testing.T) {
+	is := is.New(t)
+	loader := func() ([]byte, error) {
+		return []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>`), nil
+	}
+	result, err := renderWith(stubEngineState{}, loader)
+	is.NoErr(err)
+	assertJPEG(t, result)
+}
 
 // ---- Render -----------------------------------------------------------------
 
-func TestRender_ReturnsPNGBytes(t *testing.T) {
+func TestRender_ReturnsJPEGBytes(t *testing.T) {
 	is := is.New(t)
 	result, err := Render(stubEngineState{})
 	is.NoErr(err)
-	if len(result) < 4 {
-		t.Fatalf("expected PNG bytes, got %d bytes", len(result))
-	}
-	// PNG magic bytes: 0x89 'P' 'N' 'G'
-	is.Equal(result[0], byte(0x89))
-	is.Equal(result[1], byte('P'))
-	is.Equal(result[2], byte('N'))
-	is.Equal(result[3], byte('G'))
+	assertJPEG(t, result)
 }
 
 func TestRenderWithLoader_AssetError_ReturnsError(t *testing.T) {
@@ -51,7 +97,6 @@ func TestLoadSVG_ReturnsSVGBytes(t *testing.T) {
 	result, err := LoadSVG(stubEngineState{})
 	is.NoErr(err)
 	is.NotNil(result)
-	// SVG must start with an XML header or <svg element.
 	if len(result) < 4 {
 		t.Fatalf("expected SVG bytes, got %d bytes", len(result))
 	}
@@ -66,60 +111,53 @@ func TestLoadSVGWith_AssetError_ReturnsError(t *testing.T) {
 	is.NotNil(err)
 }
 
-// ---- svgToPNG ---------------------------------------------------------------
+// ---- svgToJPEG --------------------------------------------------------------
 
-func TestSVGToPNG_ValidSVGWithViewBox_ReturnsPNG(t *testing.T) {
+func TestSVGToJPEG_ValidSVGWithViewBox_ReturnsJPEG(t *testing.T) {
 	is := is.New(t)
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 80"><rect width="100" height="80" fill="white"/></svg>`)
-	result, err := svgToPNG(svg)
+	result, err := svgToJPEG(svg)
 	is.NoErr(err)
-	if len(result) < 4 {
-		t.Fatalf("expected PNG bytes, got %d bytes", len(result))
-	}
-	is.Equal(result[0], byte(0x89))
-	is.Equal(result[1], byte('P'))
+	assertJPEG(t, result)
 }
 
-func TestSVGToPNG_ValidSVGWithWidthHeight_ReturnsPNG(t *testing.T) {
+func TestSVGToJPEG_ValidSVGWithWidthHeight_ReturnsJPEG(t *testing.T) {
 	is := is.New(t)
 	// No viewBox — falls back to width/height.
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>`)
-	result, err := svgToPNG(svg)
+	result, err := svgToJPEG(svg)
 	is.NoErr(err)
-	if len(result) < 4 {
-		t.Fatalf("expected PNG bytes, got %d bytes", len(result))
-	}
-	is.Equal(result[0], byte(0x89))
+	assertJPEG(t, result)
 }
 
-func TestSVGToPNG_NoDimensions_ReturnsDefaultSizePNG(t *testing.T) {
+func TestSVGToJPEG_NoDimensions_ReturnsDefaultSizeJPEG(t *testing.T) {
 	is := is.New(t)
 	// No viewBox, no width/height → falls back to 600×400.
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>`)
-	result, err := svgToPNG(svg)
+	result, err := svgToJPEG(svg)
 	is.NoErr(err)
 	is.NotNil(result)
 }
 
-func TestSVGToPNG_ExportedWrapper_ReturnsPNG(t *testing.T) {
+func TestSVGToJPEG_ExportedWrapper_ReturnsJPEG(t *testing.T) {
 	is := is.New(t)
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>`)
-	result, err := SVGToPNG(svg)
+	result, err := SVGToJPEG(svg)
 	is.NoErr(err)
 	is.NotNil(result)
 }
 
-func TestSVGToPNGWith_EncoderError_ReturnsError(t *testing.T) {
+func TestSVGToJPEGWith_EncoderError_ReturnsError(t *testing.T) {
 	is := is.New(t)
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"/>`)
-	_, err := svgToPNGWith(svg, failEncoder)
+	_, err := svgToJPEGWith(svg, failEncoder)
 	is.NotNil(err)
 }
 
-func TestSVGToPNGWith_MalformedXML_ReturnsError(t *testing.T) {
+func TestSVGToJPEGWith_MalformedXML_ReturnsError(t *testing.T) {
 	is := is.New(t)
 	// Malformed XML causes oksvg.ReadIconStream to return an XML syntax error.
-	_, err := svgToPNGWith([]byte(`<svg><unclosed`), png.Encode)
+	_, err := svgToJPEGWith([]byte(`<svg><unclosed`), jpegEncode)
 	is.NotNil(err)
 }
 
@@ -206,18 +244,14 @@ const renderTestSVG = `<?xml version="1.0"?>
   <polygon inkscape:label="baz" points="5,5 15,5 15,15 5,15" id="baz"/>
 </svg>`
 
-func TestRenderZoomed_WithMatchingProvinces_ReturnsPNG(t *testing.T) {
+func TestRenderZoomed_WithMatchingProvinces_ReturnsJPEG(t *testing.T) {
 	is := is.New(t)
 	result, err := RenderZoomed(stubEngineState{}, []byte(renderTestSVG), []string{"foo"})
 	is.NoErr(err)
-	if len(result) < 4 {
-		t.Fatalf("expected PNG bytes, got %d bytes", len(result))
-	}
-	is.Equal(result[0], byte(0x89))
-	is.Equal(result[1], byte('P'))
+	assertJPEG(t, result)
 
 	// Verify the output dimensions differ from the original canvas (100×100).
-	img, err := png.Decode(bytes.NewReader(result))
+	img, err := jpeg.Decode(bytes.NewReader(result))
 	is.NoErr(err)
 	bounds := img.Bounds()
 	// The zoomed view of "foo" (10×10 box + padding) at 800px wide
@@ -229,13 +263,10 @@ func TestRenderZoomed_WithMatchingProvinces_ReturnsPNG(t *testing.T) {
 
 func TestRenderZoomed_EmptyProvinceList_UsesFullCanvas(t *testing.T) {
 	is := is.New(t)
-	// Empty provinces → falls back to full canvas viewBox → valid PNG.
+	// Empty provinces → falls back to full canvas viewBox → valid JPEG.
 	result, err := RenderZoomed(stubEngineState{}, []byte(renderTestSVG), nil)
 	is.NoErr(err)
-	if len(result) < 4 {
-		t.Fatalf("expected PNG bytes, got %d bytes", len(result))
-	}
-	is.Equal(result[0], byte(0x89))
+	assertJPEG(t, result)
 }
 
 func TestRenderZoomed_ProvinceNotInSVG_UsesFullCanvas(t *testing.T) {
@@ -260,7 +291,7 @@ func TestRenderZoomed_NoBoundsNoViewBox_UsesDefaultSize(t *testing.T) {
 	// SVG with no viewBox and no numeric width/height; provinces empty.
 	// vw and vh end up 0 → outH = outputWidth (800).
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)
-	result, err := renderZoomedWith(stubEngineState{}, svg, nil, png.Encode)
+	result, err := renderZoomedWith(stubEngineState{}, svg, nil, jpegEncode)
 	is.NoErr(err)
 	is.NotNil(result)
 }
@@ -270,4 +301,3 @@ func TestRenderZoomedWith_EncoderError_ReturnsError(t *testing.T) {
 	_, err := renderZoomedWith(stubEngineState{}, []byte(renderTestSVG), []string{"foo"}, failEncoder)
 	is.NotNil(err)
 }
-

@@ -22,7 +22,11 @@ Adjudication is handled by [godip](https://github.com/zond/godip) (DATC-complian
 ## Running the QA bot
 
 The QA bot is a local REPL for exercising the full bot layer in your terminal without needing
-Slack, Telegram, or any external service. All state is held in memory.
+Slack, Telegram, or any external service. It uses the same event-log architecture as the real
+bot: every command posts structured JSON events to an in-memory channel, and state is rebuilt
+from that event log on each dispatch — exactly as it would be against Slack or Telegram. The
+only difference from production is that the channel history is not persisted to disk, so
+restarting the REPL starts a fresh game.
 
 ```bash
 go run ./cmd/qabot

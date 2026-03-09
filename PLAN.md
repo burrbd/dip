@@ -38,9 +38,10 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9e — Local QA REPL
 - [x] Story 9f — Map Output: JPEG Encoding + SVG Asset Cache
 - [x] Story 10 — Telegram Platform Adapter
+- [ ] Story 10a — QA Bot: README Documentation
+- [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
-- [ ] Story 13 — Lambda / EventBridge Deployment
 
 ---
 
@@ -724,6 +725,52 @@ conventions, and edge-case notes.
 
 ---
 
+### Story 10a — QA Bot: README Documentation
+
+**Goal:** Document the local QA REPL so that any tester can run it directly in their terminal
+without reading source code or implementation plans.
+
+**Files:** `README.md`
+
+**Acceptance criteria:**
+- `README.md` gains a "Running the QA bot" section that explains `go run ./cmd/qabot`
+- The section documents the `/as <Nation|gm>` meta-command for switching the active player
+- The section lists which commands are dispatched as DMs (`order`, `orders`, `clear`, `submit`,
+  `retreat`, `disband`, `build`, `waive`) versus channel commands
+- A short example session (newgame → join → start → order → force-resolve → map) is included
+- The section notes that map images are written to temp files and their paths are printed
+
+---
+
+### Story 13 — Lambda / EventBridge Deployment
+
+**Goal:** Refactor session scheduling to a `Scheduler` interface and wire up a Lambda entry
+point so the bot runs as a stateless FaaS application with externally managed phase deadlines.
+
+**Files:** `session/scheduler.go`, `platform/eventbridge/scheduler.go`, `cmd/lambdabot/main.go`
+
+**Acceptance criteria:**
+- `Scheduler` interface defined in `session/scheduler.go`:
+  ```
+  Schedule(channelID string, at time.Time) error
+  Cancel(channelID string) error
+  ```
+- `LocalScheduler` implementation wraps `time.AfterFunc`; used in tests and server deployments
+- `EventBridgeScheduler` implementation creates/deletes one-time AWS EventBridge Scheduler rules
+  named by `channelID`; rule target is the Lambda function ARN (from environment variable)
+- `Session.timer *time.Timer` and `Session.mu sync.Mutex` replaced by `Session.scheduler Scheduler`
+- `GameStarted` and `PhaseResolved` event structs gain `DeadlineAt time.Time` (serialised as RFC3339)
+- `AdvanceTurn()` gains an idempotency check: reads game channel history, no-ops if a
+  `PhaseResolved` event already exists for the current phase
+- `cmd/lambdabot/main.go` handles two event shapes:
+  - Platform webhook payload → parse command → `bot.Dispatch`
+  - `{"action": "advance_turn", "channel_id": "..."}` → `session.Load()` → `AdvanceTurn()`
+- Unit tests cover `LocalScheduler` fire/cancel, idempotency guard (duplicate advance no-ops),
+  and Lambda handler routing
+- `go test -v -cover -race ./...` passes
+
+---
+
 ### Story 11 — Slack Platform Adapter
 
 **Goal:** Deploy the bot as a Slack app.
@@ -765,33 +812,4 @@ per-conversation charges. Tackle only if Telegram/Slack do not meet deployment n
 - `cmd/whatsappbot/main.go` reads `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`,
   `TWILIO_WHATSAPP_NUMBER`, `DATA_DIR`, `PORT` from env
 - Unit tests cover all Channel methods using a mock Twilio API server
-- `go test -v -cover -race ./...` passes
-
----
-
-### Story 13 — Lambda / EventBridge Deployment
-
-**Goal:** Refactor session scheduling to a `Scheduler` interface and wire up a Lambda entry
-point so the bot runs as a stateless FaaS application with externally managed phase deadlines.
-
-**Files:** `session/scheduler.go`, `platform/eventbridge/scheduler.go`, `cmd/lambdabot/main.go`
-
-**Acceptance criteria:**
-- `Scheduler` interface defined in `session/scheduler.go`:
-  ```
-  Schedule(channelID string, at time.Time) error
-  Cancel(channelID string) error
-  ```
-- `LocalScheduler` implementation wraps `time.AfterFunc`; used in tests and server deployments
-- `EventBridgeScheduler` implementation creates/deletes one-time AWS EventBridge Scheduler rules
-  named by `channelID`; rule target is the Lambda function ARN (from environment variable)
-- `Session.timer *time.Timer` and `Session.mu sync.Mutex` replaced by `Session.scheduler Scheduler`
-- `GameStarted` and `PhaseResolved` event structs gain `DeadlineAt time.Time` (serialised as RFC3339)
-- `AdvanceTurn()` gains an idempotency check: reads game channel history, no-ops if a
-  `PhaseResolved` event already exists for the current phase
-- `cmd/lambdabot/main.go` handles two event shapes:
-  - Platform webhook payload → parse command → `bot.Dispatch`
-  - `{"action": "advance_turn", "channel_id": "..."}` → `session.Load()` → `AdvanceTurn()`
-- Unit tests cover `LocalScheduler` fire/cancel, idempotency guard (duplicate advance no-ops),
-  and Lambda handler routing
 - `go test -v -cover -race ./...` passes

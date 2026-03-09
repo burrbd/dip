@@ -19,6 +19,58 @@ Adjudication is handled by [godip](https://github.com/zond/godip) (DATC-complian
 | `platform/` | Slack and Telegram adapters |
 | `cmd/` | entry points (`slackbot`, `telegrambot`) |
 
+## Running the QA bot
+
+The QA bot is a local REPL for exercising the full bot layer in your terminal without needing
+Slack, Telegram, or any external service. All state is held in memory.
+
+```bash
+go run ./cmd/qabot
+```
+
+This starts a prompt: `[gm] > `
+
+### Switching players
+
+Use the `/as` meta-command to switch the active player. All subsequent commands are sent as
+that player.
+
+```
+/as gm          — act as the Game Master (default)
+/as England     — act as the England player
+/as France      — act as France
+```
+
+### Command routing
+
+Commands that involve secret order submission are automatically sent as DMs (so opponents
+cannot see them): `order`, `orders`, `clear`, `submit`, `retreat`, `disband`, `build`, `waive`.
+
+All other commands (`newgame`, `join`, `start`, `status`, `map`, `force-resolve`, etc.) are
+sent to the shared game channel.
+
+### Example session
+
+```
+[gm] > /newgame
+[gm] > /as England
+[England] > /join England
+[England] > /as France
+[France] > /join France
+[France] > /as gm
+[gm] > /start
+[gm] > /as England
+[England] > /order A Lon H
+[England] > /submit
+[England] > /as gm
+[gm] > /force-resolve
+[gm] > /map
+Map saved to /tmp/dip-map-3456789012.jpg
+[gm] > /status
+```
+
+Map images are written to a temp file and the path is printed. Exit with Ctrl-D.
+
 ## Running tests
 
 ```bash

@@ -55,7 +55,7 @@ type Dispatcher struct {
 	graph          dipmap.Graph                                                // optional board graph for /map neighbourhood queries
 	svgFn          func(dipmap.EngineState) ([]byte, error)                   // defaults to dipmap.LoadSVG (raw SVG bytes)
 	overlayFn      func([]byte, map[string]dipmap.Unit) ([]byte, error)       // defaults to dipmap.Overlay (unit glyphs)
-	pngFn          func([]byte) ([]byte, error)                               // defaults to dipmap.SVGToPNG (full-board PNG)
+	imgFn          func([]byte) ([]byte, error)                               // defaults to dipmap.SVGToJPEG (full-board JPEG)
 	highlightFn    func([]byte, []string) ([]byte, error)                     // defaults to dipmap.Highlight
 	renderZoomedFn func(dipmap.EngineState, []byte, []string) ([]byte, error) // defaults to dipmap.RenderZoomed
 }
@@ -70,7 +70,7 @@ func New(ch events.Channel, notifier session.Notifier, loader session.EngineLoad
 		sessions:       make(map[string]*session.Session),
 		svgFn:          dipmap.LoadSVG,
 		overlayFn:      dipmap.Overlay,
-		pngFn:          dipmap.SVGToPNG,
+		imgFn:          dipmap.SVGToJPEG,
 		highlightFn:    dipmap.Highlight,
 		renderZoomedFn: dipmap.RenderZoomed,
 	}
@@ -668,8 +668,8 @@ func (d *Dispatcher) boardGraph() dipmap.Graph {
 // Pipeline (both paths):
 //  1. svgFn   — load raw SVG asset
 //  2. overlayFn — inject army/fleet glyphs at province centroids
-//  3a. Full board: pngFn — rasterise to PNG
-//  3b. Zoomed:    highlightFn → renderZoomedFn — highlight + crop → PNG
+//  3a. Full board: imgFn — rasterise to JPEG
+//  3b. Zoomed:    highlightFn → renderZoomedFn — highlight + crop → JPEG
 func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 	sess, ok := d.sessions[cmd.ChannelID]
 	if !ok || sess == nil {
@@ -719,7 +719,7 @@ func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 			return "", fmt.Errorf("bot: render map: %w", err)
 		}
 	} else {
-		img, err = d.pngFn(svg)
+		img, err = d.imgFn(svg)
 		if err != nil {
 			return "", fmt.Errorf("bot: render map: %w", err)
 		}

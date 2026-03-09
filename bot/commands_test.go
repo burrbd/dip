@@ -1659,14 +1659,14 @@ func TestDispatchMap_RejectsOverlayError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestDispatchMap_RejectsPNGError(t *testing.T) {
+func TestDispatchMap_RejectsImgError(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
 	makeDMSession(d, ch, "chan1")
-	// SVG load and overlay succeed; PNG conversion fails (full-board path).
-	d.pngFn = func(_ []byte) ([]byte, error) {
-		return nil, errors.New("png failed")
+	// SVG load and overlay succeed; image conversion fails (full-board path).
+	d.imgFn = func(_ []byte) ([]byte, error) {
+		return nil, errors.New("img failed")
 	}
 
 	_, err := d.Dispatch(Command{Name: "map", ChannelID: "chan1", UserID: "u1"})

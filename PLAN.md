@@ -35,8 +35,9 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9b — Unit Overlay: Draw Armies and Fleets on the Map
 - [x] Story 9c — Real SVG Rasterisation (oksvg + rasterx)
 - [x] Story 9d — Enhanced Help & Reference Commands
-- [ ] Story 9e — Local QA REPL
-- [ ] Story 10 — Telegram Platform Adapter
+- [x] Story 9e — Local QA REPL
+- [x] Story 9f — Map Output: JPEG Encoding + SVG Asset Cache
+- [x] Story 10 — Telegram Platform Adapter
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
 - [ ] Story 13 — Lambda / EventBridge Deployment
@@ -360,6 +361,54 @@ the same manual-vendoring process.
 A codebase-wide search confirms that `os/exec` is used **only** in `dipmap/render.go`
 (and its test). No other packages shell out to external binaries. This story eliminates
 the last remaining `os/exec` dependency.
+
+---
+
+### Story 9f — Map Output: JPEG Encoding + SVG Asset Cache
+
+**Goal:** Reduce map image payloads and improve rendering throughput by switching the
+default output format from PNG to JPEG and caching the style-stripped godip SVG bytes
+so that `classical.Asset` decompression only runs once per process.
+
+**Files:** `dipmap/render.go`, `dipmap/render_test.go`, `bot/commands.go`,
+`bot/commands_test.go`, `bot/bot_functional_test.go`
+
+**Background:**
+
+The full-board godip map renders at ~1524×1357 pixels. PNG-encoding that image
+produces a 1–2 MB payload. JPEG at quality 85 produces the same visual fidelity at
+150–400 KB — a 5–10× reduction with no new dependencies (`image/jpeg` is stdlib).
+
+Every `/map` call also calls `classical.Asset("svg/map.svg")`, which gunzips ~2 MB of
+SVG data, then runs a regex to strip `<style>` blocks. Caching the result of that
+one-time work behind `sync.Once` eliminates redundant decompression on every request.
+
+**Note — no third-party PNG library to remove:** `image/png` is part of the Go
+standard library. The only vendored image-related packages are `oksvg` and `rasterx`,
+which handle SVG-to-raster conversion and are still required regardless of output
+format.
+
+**Acceptance criteria:**
+
+- `svgToJPEGWith` (replaces `svgToPNGWith`) uses an injected encoder defaulting to
+  `jpeg.Encode` at quality 85; fills the canvas white before calling `icon.Draw` so
+  that JPEG's lack of alpha does not produce black backgrounds.
+- `SVGToJPEG` (replaces `SVGToPNG`) is the exported entry point; the name `SVGToPNG`
+  is removed.
+- `RenderZoomed` / `renderZoomedWith` encode JPEG instead of PNG by default.
+- `loadClassicalSVGWith(assetFn)` is a testable helper that loads the SVG asset,
+  strips `<style>` blocks, and returns the resulting bytes. A package-level
+  `loadClassicalSVG()` wraps it behind `sync.Once` so decompression runs only once.
+- `Render` and `LoadSVG` use `loadClassicalSVG()` for production calls; testable
+  variants (`renderWithLoader`, `loadSVGWith`) continue to use an injected `assetFn`
+  directly and bypass the cache.
+- `bot.Dispatcher.pngFn` is renamed to `imgFn` and defaults to `dipmap.SVGToJPEG`.
+  Comments referring to "PNG" in the bot are updated.
+- All existing tests continue to pass with magic-byte checks updated from PNG
+  (`0x89 'P'`) to JPEG (`0xFF 0xD8`); any `png.Decode` call in tests is replaced
+  with `jpeg.Decode`.
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
 
 ---
 

@@ -73,7 +73,8 @@ func fillNMR(adj gameState) {
 
 // isEmptyPhase reports whether the current phase requires no player input:
 //   - Retreat phase with no dislodged units
-//   - Adjustment phase with no units (nothing to build or disband)
+//   - Adjustment phase where every nation's supply-centre count equals its
+//     unit count (no builds or disbands required)
 func isEmptyPhase(adj gameState) bool {
 	phase := adj.Phase()
 	if phase == nil {
@@ -83,7 +84,28 @@ func isEmptyPhase(adj gameState) bool {
 	case godip.Retreat:
 		return len(adj.Dislodgeds()) == 0
 	case godip.Adjustment:
-		return len(adj.Units()) == 0
+		// Count supply centres per nation.
+		scCount := map[godip.Nation]int{}
+		for _, nation := range adj.SupplyCenters() {
+			scCount[nation]++
+		}
+		// Count units per nation.
+		unitCount := map[godip.Nation]int{}
+		for _, unit := range adj.Units() {
+			unitCount[unit.Nation]++
+		}
+		// Empty when no nation has a mismatch (build or disband required).
+		for nation, scs := range scCount {
+			if unitCount[nation] != scs {
+				return false
+			}
+		}
+		for nation, units := range unitCount {
+			if scCount[nation] != units {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}

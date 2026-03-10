@@ -521,13 +521,28 @@ func TestCommand_Build(t *testing.T) {
 
 func TestCommand_Waive(t *testing.T) {
 	// /waive happy path: England waives its one available build slot.
-	// Expects no error and the waive order to be staged.
+	// Expects no error and an OrderSubmitted event recorded in England's DM.
+	// Because England is the only nation with a non-zero SC delta, the phase
+	// resolves automatically after this command.
 	is := is.New(t)
-	d, _ := adjustmentPhaseGame(t)
+	d, ch := adjustmentPhaseGame(t)
 
 	resp, err := d.Dispatch(dmCmd("waive", "u2", "game"))
 	is.NoErr(err)
 	is.Equal(resp != "", true)
+
+	dmEnvs, err := events.ScanDM(ch, "u2")
+	is.NoErr(err)
+	foundOS := false
+	for _, e := range dmEnvs {
+		if e.Type == events.TypeOrderSubmitted {
+			var os events.OrderSubmitted
+			is.NoErr(json.Unmarshal(e.Payload, &os))
+			is.Equal(os.Nation, "England")
+			foundOS = true
+		}
+	}
+	is.Equal(foundOS, true)
 	t.Logf("Waive: resp=%q", resp)
 }
 

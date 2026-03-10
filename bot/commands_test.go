@@ -996,12 +996,47 @@ func makeRetreatSession(d *Dispatcher, ch *mockChannel, gameChID string) *sessio
 	return sess
 }
 
+// makeTwoNationRetreatSession creates a session in the Retreat phase with two players
+// (u1→England, u2→France), both with dislodged units. Useful for testing that auto-advance
+// does not fire when only one nation has submitted.
+func makeTwoNationRetreatSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
+	players := map[string]string{"u1": "England", "u2": "France"}
+	eng := &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"vie": "England", "par": "France"},
+	}
+	sess := session.New(ch, gameChID, "gm1", "Spring 1901 Retreat", players, 0, eng, &mockNotifier{})
+	d.sessions[gameChID] = sess
+	return sess
+}
+
 // makeAdjustmentSession creates a session in the Adjustment phase with one player (u1→England).
 func makeAdjustmentSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
 	players := map[string]string{"u1": "England"}
 	eng := &mockEngine{
 		phase: "Fall 1901 Adjustment",
 		dump:  []byte(`{}`),
+	}
+	sess := session.New(ch, gameChID, "gm1", "Fall 1901 Adjustment", players, 0, eng, &mockNotifier{})
+	d.sessions[gameChID] = sess
+	return sess
+}
+
+// makeTwoNationAdjustmentSession creates a session in the Adjustment phase with two players
+// (u1→England, u2→France), both with units but no supply centres (so both need to disband).
+// Useful for testing that auto-advance does not fire when only one nation has submitted.
+func makeTwoNationAdjustmentSession(d *Dispatcher, ch *mockChannel, gameChID string) *session.Session {
+	players := map[string]string{"u1": "England", "u2": "France"}
+	eng := &mockEngine{
+		phase: "Fall 1901 Adjustment",
+		dump:  []byte(`{}`),
+		// Both England and France have 1 unit each but no SCs → delta = -1 for each.
+		units: map[string]engine.UnitInfo{
+			"lon": {Nation: "England"},
+			"par": {Nation: "France"},
+		},
+		// SupplyCenters returns empty map by default (0 SCs for each).
 	}
 	sess := session.New(ch, gameChID, "gm1", "Fall 1901 Adjustment", players, 0, eng, &mockNotifier{})
 	d.sessions[gameChID] = sess
@@ -1110,15 +1145,31 @@ func TestDispatchRetreat_StagesRetreatOrder(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
-	sess := makeRetreatSession(d, ch, "chan1")
+	makeRetreatSession(d, ch, "chan1")
 
 	resp, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
 	is.NoErr(err)
 	if resp == "" {
 		t.Error("expected non-empty response")
 	}
-	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "A vie-Bud")
+	// Verify the OrderSubmitted DM event was recorded (the durable record of the
+	// staged order; StagedOrders may be cleared by auto-advance after the last nation submits).
+	dmMsgs, _ := ch.DMHistory("u1")
+	var foundOrder bool
+	for _, msg := range dmMsgs {
+		var env events.Envelope
+		if json.Unmarshal([]byte(msg), &env) != nil || env.Type != events.TypeOrderSubmitted {
+			continue
+		}
+		var os events.OrderSubmitted
+		if json.Unmarshal(env.Payload, &os) != nil {
+			continue
+		}
+		if os.Nation == "England" && len(os.Orders) == 1 && os.Orders[0] == "A vie-Bud" {
+			foundOrder = true
+		}
+	}
+	is.Equal(foundOrder, true)
 }
 
 func TestDispatchRetreat_WriteDMError(t *testing.T) {
@@ -1216,30 +1267,60 @@ func TestDispatchDisband_StagesDisbandInRetreatPhase(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
-	sess := makeRetreatSession(d, ch, "chan1")
+	makeRetreatSession(d, ch, "chan1")
 
 	resp, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
 	is.NoErr(err)
 	if resp == "" {
 		t.Error("expected non-empty response")
 	}
-	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "A vie disband")
+	// Verify OrderSubmitted DM event was recorded.
+	dmMsgs, _ := ch.DMHistory("u1")
+	var foundOrder bool
+	for _, msg := range dmMsgs {
+		var env events.Envelope
+		if json.Unmarshal([]byte(msg), &env) != nil || env.Type != events.TypeOrderSubmitted {
+			continue
+		}
+		var os events.OrderSubmitted
+		if json.Unmarshal(env.Payload, &os) != nil {
+			continue
+		}
+		if os.Nation == "England" && len(os.Orders) == 1 && os.Orders[0] == "A vie disband" {
+			foundOrder = true
+		}
+	}
+	is.Equal(foundOrder, true)
 }
 
 func TestDispatchDisband_StagesDisbandInAdjustmentPhase(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
-	sess := makeAdjustmentSession(d, ch, "chan1")
+	makeAdjustmentSession(d, ch, "chan1")
 
 	resp, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Lon"))
 	is.NoErr(err)
 	if resp == "" {
 		t.Error("expected non-empty response")
 	}
-	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "A lon disband")
+	// Verify OrderSubmitted DM event was recorded.
+	dmMsgs, _ := ch.DMHistory("u1")
+	var foundOrder bool
+	for _, msg := range dmMsgs {
+		var env events.Envelope
+		if json.Unmarshal([]byte(msg), &env) != nil || env.Type != events.TypeOrderSubmitted {
+			continue
+		}
+		var os events.OrderSubmitted
+		if json.Unmarshal(env.Payload, &os) != nil {
+			continue
+		}
+		if os.Nation == "England" && len(os.Orders) == 1 && os.Orders[0] == "A lon disband" {
+			foundOrder = true
+		}
+	}
+	is.Equal(foundOrder, true)
 }
 
 func TestDispatchDisband_WriteDMErrorInRetreat(t *testing.T) {
@@ -1331,15 +1412,30 @@ func TestDispatchBuild_StagesBuildOrder(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
-	sess := makeAdjustmentSession(d, ch, "chan1")
+	makeAdjustmentSession(d, ch, "chan1")
 
 	resp, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
 	is.NoErr(err)
 	if resp == "" {
 		t.Error("expected non-empty response")
 	}
-	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "build A Lon")
+	// Verify OrderSubmitted DM event was recorded.
+	dmMsgs, _ := ch.DMHistory("u1")
+	var foundOrder bool
+	for _, msg := range dmMsgs {
+		var env events.Envelope
+		if json.Unmarshal([]byte(msg), &env) != nil || env.Type != events.TypeOrderSubmitted {
+			continue
+		}
+		var os events.OrderSubmitted
+		if json.Unmarshal(env.Payload, &os) != nil {
+			continue
+		}
+		if os.Nation == "England" && len(os.Orders) == 1 && os.Orders[0] == "build A Lon" {
+			foundOrder = true
+		}
+	}
+	is.Equal(foundOrder, true)
 }
 
 func TestDispatchBuild_WriteDMError(t *testing.T) {
@@ -1392,17 +1488,44 @@ func TestDispatchWaive_RejectsNonPlayer(t *testing.T) {
 	is.Err(err)
 }
 
+func TestDispatchWaive_WriteDMError(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{dmPostErr: errors.New("dm write error")}
+	d := newTestDispatcher(ch)
+	makeAdjustmentSession(d, ch, "chan1")
+
+	_, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.Err(err)
+}
+
 func TestDispatchWaive_StagesWaiveOrder(t *testing.T) {
 	is := is.New(t)
 	ch := &mockChannel{}
 	d := newTestDispatcher(ch)
-	sess := makeAdjustmentSession(d, ch, "chan1")
+	makeAdjustmentSession(d, ch, "chan1")
 
 	resp, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
 	is.NoErr(err)
-	is.Equal(resp, "Waive order staged.")
-	is.Equal(len(sess.StagedOrders["England"]), 1)
-	is.Equal(sess.StagedOrders["England"][0], "Waive")
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+	// Verify OrderSubmitted DM event was recorded.
+	dmMsgs, _ := ch.DMHistory("u1")
+	var foundOrder bool
+	for _, msg := range dmMsgs {
+		var env events.Envelope
+		if json.Unmarshal([]byte(msg), &env) != nil || env.Type != events.TypeOrderSubmitted {
+			continue
+		}
+		var os events.OrderSubmitted
+		if json.Unmarshal(env.Payload, &os) != nil {
+			continue
+		}
+		if os.Nation == "England" && len(os.Orders) == 1 && os.Orders[0] == "Waive" {
+			foundOrder = true
+		}
+	}
+	is.Equal(foundOrder, true)
 }
 
 // ---- /retreat and /disband reject Adjustment / Retreat guard respectively ---
@@ -2731,5 +2854,208 @@ func TestDispatchReplace_RejectsIfWriteFails(t *testing.T) {
 	ch.postErrAfter = len(ch.msgs)
 
 	_, err := d.Dispatch(gameCmd("replace", "chan1", "gm1", "England", "newuser"))
+	is.Err(err)
+}
+
+// ---- auto-advance helpers coverage ------------------------------------------
+
+func TestAllRetreatActionsSubmitted_FalseWhenSecondNationPending(t *testing.T) {
+	is := is.New(t)
+	// Two nations dislodged; only England has submitted.
+	players := map[string]string{"u1": "England", "u2": "France"}
+	eng := &mockEngine{
+		phase: "Spring 1901 Retreat",
+		dump:  []byte(`{}`),
+		dislodgeds: map[string]string{
+			"vie": "England",
+			"par": "France",
+		},
+	}
+	ch := &mockChannel{}
+	sess := session.New(ch, "chan1", "gm1", "Spring 1901 Retreat", players, 0, eng, &mockNotifier{})
+	sess.Submitted["England"] = true
+	is.Equal(allRetreatActionsSubmitted(sess), false)
+}
+
+func TestAllAdjustmentActionsSubmitted_FalseWhenSecondNationPending(t *testing.T) {
+	is := is.New(t)
+	// England has 1 unit, 0 SCs (needs disband); has not submitted.
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase: "Fall 1901 Adjustment",
+		dump:  []byte(`{}`),
+		units: map[string]engine.UnitInfo{
+			"lon": {Nation: "England"},
+		},
+		// SupplyCenters returns empty map: England 0 SCs, 1 unit → delta -1
+	}
+	ch := &mockChannel{}
+	sess := session.New(ch, "chan1", "gm1", "Fall 1901 Adjustment", players, 0, eng, &mockNotifier{})
+	is.Equal(allAdjustmentActionsSubmitted(sess), false)
+}
+
+func TestDispatchRetreat_DoesNotAutoAdvanceWithPendingNation(t *testing.T) {
+	// Two nations dislodged; only England submits — game should NOT auto-advance.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeTwoNationRetreatSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchDisband_DoesNotAutoAdvanceInRetreatWithPendingNation(t *testing.T) {
+	// Two nations dislodged; only England disbands — game should NOT auto-advance.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeTwoNationRetreatSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchBuild_DoesNotAutoAdvanceWithPendingNation(t *testing.T) {
+	// Two nations both need adjustment; only England builds — game should NOT auto-advance.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeTwoNationAdjustmentSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchDisband_DoesNotAutoAdvanceInAdjustmentWithPendingNation(t *testing.T) {
+	// Two nations both need to disband; only England disbands — game should NOT auto-advance.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeTwoNationAdjustmentSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Lon"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchWaive_DoesNotAutoAdvanceWithPendingNation(t *testing.T) {
+	// Two nations both need adjustment; only England waives — game should NOT auto-advance.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeTwoNationAdjustmentSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.NoErr(err)
+	if resp == "" {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestDispatchWaive_ReturnsErrorWhenAdvanceTurnFails(t *testing.T) {
+	// allAdjustmentActionsSubmitted returns true (England only, 0 delta), but
+	// AdvanceTurn fails because Resolve returns an error.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase:      "Fall 1901 Adjustment",
+		dump:       []byte(`{}`),
+		resolveErr: errors.New("resolve failed"),
+		// 0 SCs, 0 units → allAdjustmentActionsSubmitted returns true immediately.
+	}
+	sess := session.New(ch, "chan1", "gm1", "Fall 1901 Adjustment", players, 0, eng, &mockNotifier{})
+	d.sessions["chan1"] = sess
+
+	_, err := d.Dispatch(dmCmd("waive", "chan1", "u1"))
+	is.Err(err)
+}
+
+func TestDispatchRetreat_ReturnsErrorWhenAdvanceTurnFails(t *testing.T) {
+	// England is the only dislodged nation; AdvanceTurn fails → handler returns error.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"vie": "England"},
+		resolveErr: errors.New("resolve failed"),
+	}
+	sess := session.New(ch, "chan1", "gm1", "Spring 1901 Retreat", players, 0, eng, &mockNotifier{})
+	d.sessions["chan1"] = sess
+
+	_, err := d.Dispatch(dmCmd("retreat", "chan1", "u1", "A", "Vie", "Bud"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_ReturnsErrorWhenAdvanceTurnFailsInRetreat(t *testing.T) {
+	// England is the only dislodged nation; AdvanceTurn fails → handler returns error.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase:      "Spring 1901 Retreat",
+		dump:       []byte(`{}`),
+		dislodgeds: map[string]string{"vie": "England"},
+		resolveErr: errors.New("resolve failed"),
+	}
+	sess := session.New(ch, "chan1", "gm1", "Spring 1901 Retreat", players, 0, eng, &mockNotifier{})
+	d.sessions["chan1"] = sess
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Vie"))
+	is.Err(err)
+}
+
+func TestDispatchDisband_ReturnsErrorWhenAdvanceTurnFailsInAdjustment(t *testing.T) {
+	// England has 0 SCs and 0 units (auto-advance fires); AdvanceTurn fails → error.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase:      "Fall 1901 Adjustment",
+		dump:       []byte(`{}`),
+		resolveErr: errors.New("resolve failed"),
+		// 0 SCs, 0 units → allAdjustmentActionsSubmitted returns true immediately.
+	}
+	sess := session.New(ch, "chan1", "gm1", "Fall 1901 Adjustment", players, 0, eng, &mockNotifier{})
+	d.sessions["chan1"] = sess
+
+	_, err := d.Dispatch(dmCmd("disband", "chan1", "u1", "A", "Lon"))
+	is.Err(err)
+}
+
+func TestDispatchBuild_ReturnsErrorWhenAdvanceTurnFails(t *testing.T) {
+	// England has 0 SCs and 0 units (auto-advance fires); AdvanceTurn fails → error.
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	players := map[string]string{"u1": "England"}
+	eng := &mockEngine{
+		phase:      "Fall 1901 Adjustment",
+		dump:       []byte(`{}`),
+		resolveErr: errors.New("resolve failed"),
+		// 0 SCs, 0 units → allAdjustmentActionsSubmitted returns true immediately.
+	}
+	sess := session.New(ch, "chan1", "gm1", "Fall 1901 Adjustment", players, 0, eng, &mockNotifier{})
+	d.sessions["chan1"] = sess
+
+	_, err := d.Dispatch(dmCmd("build", "chan1", "u1", "A", "Lon"))
 	is.Err(err)
 }

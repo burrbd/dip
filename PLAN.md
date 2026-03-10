@@ -851,144 +851,12 @@ viewBox width (≈1524). Apply this scaling in the pipeline step that rewrites f
   those `<text>` strings.
 - A unit test covers the style-rewriting helper on a synthetic `<text>` element.
 
----
-
-#### Issue 3 — Missing units (not all starting pieces appear)
-
-Several nations show fewer units than their starting position requires (Russia: 0, France: 1,
-Turkey: 1 instead of the correct 3, 3, 3 respectively). The root cause is `provinceCenter`
-computing centroids from polygon vertices in the `provinces` layer — this fails for provinces
-whose polygon paths use relative (`m`/`l`/`c`) SVG commands, producing coordinates far outside
-the map bounds (the polygon vertex coordinates are relative offsets, not absolute positions).
-
-**Fix:** Replace the polygon-averaging approach in `provinceCenter` with a lookup against the
-`province-centers` layer. Each province `X` has a `<path id="XCenter" d="m cx,cy c … z …">`.
-Extract `cx, cy` as the first two numbers in the `d` attribute — these are the absolute
-coordinates of the province visual centre (see SVG structure section above for details).
-
-New helper: `provinceCenterFromCenterLayer(svg, province string) (cx, cy float64, ok bool)` —
-searches for `id="<province>Center"`, extracts the first `m` translation, returns the coordinates.
-
-Keep `provinceCenter` as the public API but rewrite its body to call the new helper, falling
-back to the polygon-averaging approach only if the center-layer lookup fails (for forward
-compatibility).
-
-**Acceptance criteria:**
-- `provinceCenterFromCenterLayer` returns correct coordinates for `vie`, `bud`, `mos`, `stp`,
-  `par`, `lon` against the real godip SVG (verified in an integration-style test that loads
-  `classical.Asset` and checks each coordinate falls within x ∈ [100, 1500], y ∈ [100, 1400]).
-- The functional test `TestCommand_Map_NoArgs` (or a new sub-test with a full 7-nation starting
-  position) asserts the returned SVG contains `<g id="units">` with 22 glyph groups.
-
----
-
-#### Issue 4 — Units are circles; armies and fleets need distinct geometry
-
-Current `unitGlyph` renders every unit as `<circle r="25">`. Traditional Diplomacy uses a
-filled square for armies and a narrow filled rectangle for fleets.
-
-**Fix:** Replace the `<circle>` with:
-- **Army:** `<rect width="40" height="40" x="-20" y="-20" rx="4" ry="4" …/>` (square with
-  slight rounding)
-- **Fleet:** `<rect width="50" height="28" x="-25" y="-14" rx="4" ry="4" …/>` (wider, shorter
-  rectangle)
-
-Keep the nation fill colour and white stroke. Keep the "A"/"F" text label centred inside.
-
-**Acceptance criteria:**
-- `unitGlyph` for `Type="Army"` produces SVG containing `<rect` with equal `width`/`height`.
-- `unitGlyph` for `Type="Fleet"` produces SVG containing `<rect` with `width > height`.
-- No `<circle` element appears in the output of `unitGlyph`.
-- All existing unit-glyph unit tests updated accordingly.
-
----
-
-#### Issue 5 — Phantom unit in the ocean (bad centroid)
-
-One unit (visible as a red dot near Iceland in the screenshot) is placed far outside the map
-bounds. This is the same root cause as Issue 3: `provinceCenter` averaging relative-command
-polygon vertices produces nonsensical absolute coordinates for some provinces. Fixing Issue 3
-(switching to `province-centers` layer lookup) fixes this automatically.
-
-**Acceptance criteria:**
-- No unit glyph has coordinates outside x ∈ [100, 1500], y ∈ [100, 1400] in a full-board render.
-- Covered by the Issue 3 integration test; no separate fix needed once Issue 3 is resolved.
-
----
-
-#### Issue 6 — Units are too large; size must scale with canvas
-
-At the default canvas size (≈1524 × 1357 px) a circle radius of 25 px looks enormous.
-Units should be roughly quarter their current size on the full board, and scale
-proportionally for zoomed renders.
-
-**Fix:** Pass `canvasWidth` into `unitGlyph` (or compute a `scale` factor upstream and pass
-it in). Use `side = max(8, int(canvasWidth / 50))` for the army square side length
-(tune as needed; document the constant). Fleet width = `side * 1.3`, fleet height = `side * 0.7`.
-Font size for the "A"/"F" label: `fontSize = side * 0.6`.
-
-**Acceptance criteria:**
-- At `canvasWidth = 1524`, the army square side is ≤ 32 px.
-- At `canvasWidth = 400` (zoomed), the army square side is ≥ 8 px.
-- `unitGlyph` accepts a `scale float64` parameter (or equivalent); unit tests cover both a
-  large-canvas and small-canvas invocation.
-
----
-
-#### Issue 7 — Unit glyphs obstruct province labels
-
-Labels must render above unit glyphs. In SVG, later elements paint on top of earlier ones.
-The `names` layer is currently in the SVG body above where `Overlay` injects the units group,
-so units are painted on top of labels.
-
-**Fix:** In `Overlay`, after injecting `<g id="units">`, also lift the `names` layer group
-(using the same technique as `liftSupplyCenterForeground`) and re-inject it after the units
-group so it paints on top. If the names layer cannot be found (e.g. in tests using synthetic
-SVGs), proceed without lifting it.
-
-Final injection order before `</svg>`:
-```
-<g id="units">…</g>
-<g inkscape:label="supply-centers foreground copy">…</g>
-<g inkscape:label="names">…</g>
-</svg>
-```
-
-**Acceptance criteria:**
-- In the SVG returned by `Overlay`, the `names` group appears after the `units` group.
-- A unit test on a synthetic SVG (containing a `names` group) asserts this ordering.
-
----
-
-#### Issue 8 — Unit glyphs obstruct supply-centre markers
-
-The existing `liftSupplyCenterForeground` mechanism re-injects the supply-centre foreground copy
-group after the units layer. Confirm this is functioning correctly end-to-end now that units are
-resized and geometry has changed.
-
-**Fix / verification:**
-- Write a unit test that calls `Overlay` on a synthetic SVG containing a
-  `inkscape:label="supply-centers foreground copy"` group and asserts that group appears after
-  `<g id="units">` in the result.
-- If `liftSupplyCenterForeground` is confirmed to work, the test is the acceptance criterion.
-  If not, fix the lifting logic.
-
-**Acceptance criteria:**
-- `TestOverlay_SupplyCentreForegroundLiftedAboveUnits` passes: the supply-centre foreground
-  group appears after the units group in the output SVG.
-- This test was already implied by Story 9b but is now made explicit.
-
----
-
 #### Combined acceptance criteria
 
-- All eight individual acceptance criteria above are met.
+- Issues 1 and 2 individual acceptance criteria above are met.
+- Issues 3–8 are superseded by Story 9h, which replaces unit injection entirely.
 - `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
 - `go test -v -tags functional ./bot/` passes.
-- No `<circle` elements appear in the units layer of any rendered SVG.
-- A full-board `/map` render with all 22 starting units produces a JPEG where all unit glyphs
-  are inside the map bounds, province labels are visible, and supply-centre markers are not
-  hidden beneath unit shapes.
 
 ---
 
@@ -1004,8 +872,9 @@ After the agent completes this story, the owner opens `dipmap/assets/map.svg` in
 manually adjusts glyph positions to taste. The bot code is unaffected by those manual tweaks —
 it only reads IDs, not coordinates.
 
-This story supersedes Story 9g Issues 3, 4, 5, and 6 (unit placement, unit geometry, phantom
-units, and unit scaling). Issues 1, 2, 7, and 8 from Story 9g are unaffected.
+This story supersedes Story 9g Issues 3–8 (unit placement, unit geometry, phantom units, unit
+scaling, and z-order). The generator controls layer ordering in the SVG directly, so no runtime
+lifting is needed. Issues 1 and 2 from Story 9g are unaffected.
 
 **Files:**
 - `cmd/mkapsvg/main.go` — new one-off generator (keep it; it documents how the SVG was built)

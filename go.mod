@@ -1,6 +1,6 @@
 module github.com/burrbd/dip
 
-go 1.21
+go 1.24
 
 require (
 	github.com/cheekybits/is v0.0.0-20150225183255-68e9c0620927

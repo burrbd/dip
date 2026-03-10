@@ -37,6 +37,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9d — Enhanced Help & Reference Commands
 - [x] Story 9e — Local QA REPL
 - [x] Story 9f — Map Output: JPEG Encoding + SVG Asset Cache
+- [ ] Story 9g — Map Rendering Polish (zoom radius, labels, unit geometry, scale, z-order)
 - [x] Story 10 — Telegram Platform Adapter
 - [x] Story 10a — QA Bot: README Documentation
 - [ ] Story 13 — Lambda / EventBridge Deployment
@@ -739,6 +740,264 @@ without reading source code or implementation plans.
   `retreat`, `disband`, `build`, `waive`) versus channel commands
 - A short example session (newgame → join → start → order → force-resolve → map) is included
 - The section notes that map images are written to temp files and their paths are printed
+
+---
+
+### Story 9g — Map Rendering Polish
+
+**Goal:** Fix eight rendering defects visible in the live map output: broken zoom radius,
+missing province labels, missing/misplaced units, oversized units, wrong unit geometry,
+and z-order issues that let units obscure labels and supply-centre markers.
+
+**Files:** `dipmap/overlay.go`, `dipmap/overlay_test.go`, `dipmap/render.go`,
+`dipmap/render_test.go`, `bot/commands.go`, `bot/commands_test.go`,
+`bot/bot_functional_test.go`
+
+---
+
+#### SVG structure — what the godip map actually contains
+
+Inspecting `classical.Asset("svg/map.svg")` (the vendored godip map) reveals several layers
+relevant to this story. All layer names come from `inkscape:label` attributes on `<g>` elements.
+
+**`units` layer (line 3669):** The units layer is **empty** — a self-closing `<g id="units"/>`.
+godip provides the board template only; it does not embed pre-drawn unit glyphs. The
+`dipmap.Overlay` injection approach (writing child elements into this group before rendering)
+is therefore correct and intentional.
+
+**`names` layer (line 2588):** Province name labels are already in the SVG as `<text>` elements
+with hand-positioned `x`/`y` coordinates (some with `transform="rotate(…)"` for diagonal labels).
+They fail to render because:
+1. `stripStyles` removes `<style>` blocks but not inline `style=` attributes; the inline styles
+   reference the font `LibreBaskerville-Bold` which oksvg cannot load, causing the text elements
+   to be silently dropped.
+2. Some labels use `display:inline` in their inline style; `prepareForRender` only handles
+   `display:none`, so `display:inline` is left as-is and oksvg may still reject them.
+
+The fix for Issue 2 should work with these existing `<text>` elements rather than injecting a
+new layer — strip or simplify their inline styles so oksvg can render them with a fallback font.
+
+**`province-centers` layer (line 859):** Every province has a pre-computed center marker
+`<path id="<province>Center" …>` (e.g. `id="vieCenter"`, `id="mosCenter"`). These are the
+concentric-circle supply-marker rings visible on the board. Their `d` attribute encodes the
+exact visual centre of each province.
+
+This is the correct data source for unit placement (Issues 3 and 5). The current
+`provinceCenter` function computes centroids by averaging polygon vertices from the `provinces`
+layer — an approach that fails for provinces whose polygon uses relative SVG path commands,
+producing absurd coordinates (hence the phantom army near Iceland). Using the `<province>Center`
+path centroid instead eliminates the polygon-averaging entirely.
+
+**Parsing `<province>Center` paths:** Each center marker is a multi-ring concentric circle
+encoded as four `m`/`c`/`z` sub-paths. The centroid is the translation point of the first
+sub-path — the first pair of numbers after the leading `m` command. For example:
+
+```
+d="m 748.83,856.44 c … z m … z m … z m … z"
+      ^^^^^^^ ^^^^^^^
+      cx      cy  (these are the province centre coordinates)
+```
+
+Extract `cx, cy` by taking the first two numbers in the `d` string (after stripping the leading
+`m`). No full path parsing is needed.
+
+---
+
+#### Issue 1 — `/map <territory> <n>` radius is ignored
+
+`RenderZoomed` receives the highlighted province list but the neighbourhood BFS result is
+not being passed through correctly — the bot calls `Neighborhood` but the radius `n` parsed
+from the command arguments is silently lost, so every zoomed render uses the same single-province
+highlight regardless of the number given.
+
+**Fix:** Trace the `n` argument from command parsing through to `Neighborhood(graph, province, n)`
+and confirm the enlarged province set is forwarded to `RenderZoomed`.
+
+**Acceptance criteria:**
+- `/map lon 1` crops to London + all immediate neighbours.
+- `/map lon 3` crops to a larger region than `/map lon 1`.
+- `TestCommand_Map_WithTerritoryAndRadius` is extended (or a new sub-test added) that asserts
+  the zoomed image has different pixel dimensions than the single-province render.
+
+---
+
+#### Issue 2 — No province labels on the map
+
+The godip SVG already has a `names` layer (line 2588) containing properly positioned `<text>`
+elements for every province, including rotated labels for diagonal provinces. They do not render
+because their inline `style=` attributes reference `LibreBaskerville-Bold` (unavailable to oksvg)
+and oksvg silently discards text elements with unresolvable fonts.
+
+**Fix:** In the SVG pre-processing pipeline (before passing to oksvg), rewrite the inline style
+of every `<text>` element in the `names` layer to a minimal style oksvg can handle:
+
+```
+style="font-size:16px;fill:#000000"
+```
+
+Strip `font-family`, `font-variant-*`, `-inkscape-font-specification`, and similar properties.
+Leave `font-size`, `fill`, `text-anchor`, and `writing-mode` intact. The `transform="rotate(…)"`
+attributes must be preserved as they control label orientation.
+
+Font size should also scale with canvas width so labels remain legible on zoomed renders:
+`scaledSize = baseFontSize * (canvasWidth / naturalWidth)` where `naturalWidth` is the SVG's
+viewBox width (≈1524). Apply this scaling in the pipeline step that rewrites font sizes.
+
+**Acceptance criteria:**
+- After pre-processing, `<text>` elements in the names layer have simplified `style=` attributes
+  containing no `font-family` property.
+- Full-board render contains visible text for at least the seven capital provinces
+  (Lon, Par, Ber, Mos, Rom, Vie, Con) — verify by asserting the SVG passed to oksvg contains
+  those `<text>` strings.
+- A unit test covers the style-rewriting helper on a synthetic `<text>` element.
+
+#### Combined acceptance criteria
+
+- Issues 1 and 2 individual acceptance criteria above are met.
+- Issues 3–8 are superseded by Story 9h, which replaces unit injection entirely.
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
+
+---
+
+### Story 9h — Pre-populate SVG with unit placeholder glyphs
+
+**Goal:** Produce a hand-editable SVG (`dipmap/assets/map.svg`) that is our own copy of the
+godip classical map, augmented with one army glyph and one fleet glyph for every province
+centre. All glyphs start invisible (`display:none`). The bot's `Overlay` function is then
+rewritten to activate glyphs by ID (setting `display:inline` and `fill`) rather than computing
+centroids and injecting SVG at runtime.
+
+After the agent completes this story, the owner opens `dipmap/assets/map.svg` in Inkscape and
+manually adjusts glyph positions to taste. The bot code is unaffected by those manual tweaks —
+it only reads IDs, not coordinates.
+
+This story supersedes Story 9g Issues 3–8 (unit placement, unit geometry, phantom units, unit
+scaling, and z-order). The generator controls layer ordering in the SVG directly, so no runtime
+lifting is needed. Issues 1 and 2 from Story 9g are unaffected.
+
+**Files:**
+- `cmd/mkapsvg/main.go` — new one-off generator (keep it; it documents how the SVG was built)
+- `dipmap/assets/map.svg` — new file: populated copy of the godip SVG
+- `dipmap/render.go` — update asset loading to use our SVG instead of godip's
+- `dipmap/overlay.go` — rewrite unit injection to use ID-based attribute setting
+- `dipmap/overlay_test.go` — updated tests
+
+---
+
+#### Part A — Generate the populated SVG
+
+Write `cmd/mkapsvg/main.go`. It must:
+
+1. Load the godip classical SVG via `classical.Asset("svg/map.svg")`.
+
+2. Find every province centre marker using the regex `id="([^"]+)Center"`. There are exactly
+   81 such markers (75 base provinces + 6 coastal variants: `bul/ec`, `bul/sc`, `stp/nc`,
+   `stp/sc`, `spa/nc`, `spa/sc`). Each has `d="m cx,cy …"` — the centroid is the first two
+   numbers in the `d` attribute (the translation of the first `m` sub-path).
+
+3. For each province `p` with centroid `(cx, cy)`, generate two `<g>` elements and insert them
+   as children of the `<g id="units">` layer:
+
+   ```xml
+   <g id="unit-{pid}-army"  transform="translate({cx},{cy})" display="none">
+     <rect x="-12" y="-12" width="24" height="24" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
+     <text x="0" y="5" text-anchor="middle" font-size="14" fill="#000000">A</text>
+   </g>
+   <g id="unit-{pid}-fleet" transform="translate({cx},{cy})" display="none">
+     <rect x="-15" y="-9" width="30" height="18" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
+     <text x="0" y="5" text-anchor="middle" font-size="10" fill="#000000">F</text>
+   </g>
+   ```
+
+   Where `{pid}` is the province name with `/` replaced by `-` (e.g. `stp/nc` → `unit-stp-nc-fleet`).
+   Use a fixed placeholder fill (`#cccccc`) — the bot will set the real nation colour at render time.
+
+4. For the three provinces that have coastal variants (`bul`, `spa`, `stp`), **also** emit army
+   glyphs at the base province centre (the bot will only ever activate armies at the base, never
+   at the coastal variant). For coastal variant IDs (`bul/ec`, `bul/sc`, etc.) emit **fleet only**
+   (no army glyph).
+
+5. Write the result to `dipmap/assets/map.svg` (create the directory if needed).
+
+6. Print a summary: total centres found, total glyphs written.
+
+**Acceptance criteria for Part A:**
+- `go run ./cmd/mkapsvg/` completes without error and writes `dipmap/assets/map.svg`.
+- The output SVG contains exactly 81 `unit-…-fleet` elements and 75 `unit-…-army` elements
+  (coastal variant positions are fleet-only).
+- Every `<g id="unit-…">` has `display="none"`.
+- A unit test in `cmd/mkapsvg/main_test.go` loads the generated SVG and asserts these counts
+  using a regex or XML parser. The test should run the generator against a real or synthetic
+  input and check the output.
+
+---
+
+#### Part B — Switch asset loading and simplify Overlay
+
+**Render.go:** Replace the call to `classical.Asset("svg/map.svg")` with a read of the embedded
+`dipmap/assets/map.svg`. Use `//go:embed assets/map.svg` in `render.go` (or a new `assets.go`
+file in the `dipmap` package).
+
+**Overlay.go — unit injection rewrite:**
+
+The current approach computes a centroid per province and injects SVG markup. Replace it with:
+
+```go
+func injectUnits(svg string, units map[string]UnitInfo) string {
+    for province, u := range units {
+        pid := strings.ReplaceAll(province, "/", "-")
+        id := fmt.Sprintf("unit-%s-%s", pid, strings.ToLower(u.Type))
+        colour := nationColour(u.Nation)
+        svg = setAttr(svg, id, "display", "inline")
+        svg = setAttr(svg, id, "fill", colour)   // sets fill on the <g>; children inherit
+    }
+    return svg
+}
+```
+
+`setAttr(svg, id, attr, val string) string` — a small helper that finds
+`id="<id>"` in the SVG and updates or inserts the named attribute on that element.
+If the element is not found (unknown province), log to `stderr` and continue.
+
+Remove `provinceCenter`, `extractProvinceShape`, `parseCoordinates`, `unitGlyph`, and all
+centroid-computation code from `overlay.go` — it is no longer needed.
+
+**Acceptance criteria for Part B:**
+- `dipmap.Overlay` no longer contains centroid computation or glyph injection code.
+- `setAttr` is tested with a synthetic SVG snippet; edge cases: attribute already present
+  (must update, not duplicate), attribute absent (must add), element not found (no-op + log).
+- A full-board overlay with all 22 starting units produces an SVG where 22 `unit-…` elements
+  have `display="inline"` and the correct nation fill colour.
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/`.
+
+---
+
+#### Naming convention reference
+
+| Province  | Army glyph ID          | Fleet glyph ID(s)                        |
+|-----------|------------------------|------------------------------------------|
+| `lon`     | `unit-lon-army`        | `unit-lon-fleet`                         |
+| `mos`     | `unit-mos-army`        | `unit-mos-fleet` (never activated)       |
+| `stp`     | `unit-stp-army`        | — (no base fleet; use coastal variants)  |
+| `stp/nc`  | — (no army)            | `unit-stp-nc-fleet`                      |
+| `stp/sc`  | — (no army)            | `unit-stp-sc-fleet`                      |
+| `bul/ec`  | — (no army)            | `unit-bul-ec-fleet`                      |
+
+Godip uses the coast-qualified name (e.g. `"stp/nc"`) as the province key when a fleet
+is in a coastal position. The bot passes this key directly to `injectUnits`; the `pid`
+normalisation (`/` → `-`) must happen inside `injectUnits`, not in the caller.
+
+---
+
+#### Combined acceptance criteria
+
+- `go run ./cmd/mkapsvg/` produces a valid SVG with 156 unit placeholder elements.
+- `dipmap.Overlay` activates exactly the right glyphs for a given game state (verified by
+  counting `display="inline"` elements in the output).
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `cmd/mkapsvg/`.
+- `go test -v -tags functional ./bot/` passes.
+- No centroid-computation or glyph-injection code remains in `dipmap/`.
 
 ---
 

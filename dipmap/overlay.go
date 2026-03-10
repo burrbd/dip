@@ -28,6 +28,10 @@ var nationColor = map[string]string{
 // province. Province names in units should be lowercase (godip convention).
 // Provinces not found in the SVG are silently skipped. An empty units map
 // returns the original SVG unchanged.
+//
+// The supply-centers foreground copy layer (if present in the SVG) is
+// re-injected after the units layer so that supply centre markers render
+// on top of unit glyphs and are never obstructed.
 func Overlay(svg []byte, units map[string]Unit) ([]byte, error) {
 	if len(units) == 0 {
 		return svg, nil
@@ -44,9 +48,75 @@ func Overlay(svg []byte, units map[string]Unit) ([]byte, error) {
 	if len(glyphs) == 0 {
 		return svg, nil
 	}
+	s, lifted := liftSupplyCenterForeground(s)
 	layer := "<g id=\"units\">\n" + strings.Join(glyphs, "\n") + "\n</g>"
-	result := strings.Replace(s, "</svg>", layer+"\n</svg>", 1)
+	injection := layer
+	if lifted != "" {
+		injection = layer + "\n" + lifted
+	}
+	result := strings.Replace(s, "</svg>", injection+"\n</svg>", 1)
 	return []byte(result), nil
+}
+
+// liftSupplyCenterForeground removes the supply-centers foreground copy group
+// from its original position in the SVG and returns it separately so the
+// caller can re-inject it after the units layer (ensuring supply centre markers
+// render on top of unit glyphs). If the group is not found, svg is returned
+// unchanged and lifted is empty.
+func liftSupplyCenterForeground(svg string) (result, lifted string) {
+	const label = `inkscape:label="supply-centers foreground copy"`
+	idx := strings.Index(svg, label)
+	if idx < 0 {
+		return svg, ""
+	}
+	start := strings.LastIndex(svg[:idx], "<g")
+	if start < 0 {
+		return svg, ""
+	}
+	end := findGroupEnd(svg[start:])
+	if end < 0 {
+		return svg, ""
+	}
+	lifted = svg[start : start+end]
+	result = svg[:start] + svg[start+end:]
+	return result, lifted
+}
+
+// findGroupEnd returns the byte length of the outermost <g>…</g> group that
+// begins at the start of s (i.e. s must start with "<g"). Returns -1 when no
+// matching closing tag is found. Self-closing <g/> inner groups are handled
+// correctly and do not affect nesting depth.
+func findGroupEnd(s string) int {
+	depth := 0
+	i := 0
+	for i < len(s) {
+		switch {
+		case strings.HasPrefix(s[i:], "</g>"):
+			depth--
+			if depth == 0 {
+				return i + 4
+			}
+			i += 4
+		case strings.HasPrefix(s[i:], "<g") && len(s) > i+2 && isGroupTagStart(s[i+2]):
+			end := strings.IndexByte(s[i:], '>')
+			if end >= 0 && s[i+end-1] == '/' {
+				i += end + 1 // self-closing <g/>, no depth change
+			} else {
+				depth++
+				i += 2
+			}
+		default:
+			i++
+		}
+	}
+	return -1
+}
+
+// isGroupTagStart returns true when b is a character that may immediately
+// follow "<g" to form a valid SVG group tag (e.g. space, tab, newline, ">",
+// or "/" for self-closing tags).
+func isGroupTagStart(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '>' || b == '/'
 }
 
 // provinceCenter returns the centroid (cx, cy) of the named province's polygon

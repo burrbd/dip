@@ -755,6 +755,54 @@ and z-order issues that let units obscure labels and supply-centre markers.
 
 ---
 
+#### SVG structure — what the godip map actually contains
+
+Inspecting `classical.Asset("svg/map.svg")` (the vendored godip map) reveals several layers
+relevant to this story. All layer names come from `inkscape:label` attributes on `<g>` elements.
+
+**`units` layer (line 3669):** The units layer is **empty** — a self-closing `<g id="units"/>`.
+godip provides the board template only; it does not embed pre-drawn unit glyphs. The
+`dipmap.Overlay` injection approach (writing child elements into this group before rendering)
+is therefore correct and intentional.
+
+**`names` layer (line 2588):** Province name labels are already in the SVG as `<text>` elements
+with hand-positioned `x`/`y` coordinates (some with `transform="rotate(…)"` for diagonal labels).
+They fail to render because:
+1. `stripStyles` removes `<style>` blocks but not inline `style=` attributes; the inline styles
+   reference the font `LibreBaskerville-Bold` which oksvg cannot load, causing the text elements
+   to be silently dropped.
+2. Some labels use `display:inline` in their inline style; `prepareForRender` only handles
+   `display:none`, so `display:inline` is left as-is and oksvg may still reject them.
+
+The fix for Issue 2 should work with these existing `<text>` elements rather than injecting a
+new layer — strip or simplify their inline styles so oksvg can render them with a fallback font.
+
+**`province-centers` layer (line 859):** Every province has a pre-computed center marker
+`<path id="<province>Center" …>` (e.g. `id="vieCenter"`, `id="mosCenter"`). These are the
+concentric-circle supply-marker rings visible on the board. Their `d` attribute encodes the
+exact visual centre of each province.
+
+This is the correct data source for unit placement (Issues 3 and 5). The current
+`provinceCenter` function computes centroids by averaging polygon vertices from the `provinces`
+layer — an approach that fails for provinces whose polygon uses relative SVG path commands,
+producing absurd coordinates (hence the phantom army near Iceland). Using the `<province>Center`
+path centroid instead eliminates the polygon-averaging entirely.
+
+**Parsing `<province>Center` paths:** Each center marker is a multi-ring concentric circle
+encoded as four `m`/`c`/`z` sub-paths. The centroid is the translation point of the first
+sub-path — the first pair of numbers after the leading `m` command. For example:
+
+```
+d="m 748.83,856.44 c … z m … z m … z m … z"
+      ^^^^^^^ ^^^^^^^
+      cx      cy  (these are the province centre coordinates)
+```
+
+Extract `cx, cy` by taking the first two numbers in the `d` string (after stripping the leading
+`m`). No full path parsing is needed.
+
+---
+
 #### Issue 1 — `/map <territory> <n>` radius is ignored
 
 `RenderZoomed` receives the highlighted province list but the neighbourhood BFS result is
@@ -775,51 +823,62 @@ and confirm the enlarged province set is forwarded to `RenderZoomed`.
 
 #### Issue 2 — No province labels on the map
 
-The godip SVG contains text label elements for each province but oksvg silently drops
-unsupported or CSS-styled `<text>` elements. No labels appear in the rasterised output.
+The godip SVG already has a `names` layer (line 2588) containing properly positioned `<text>`
+elements for every province, including rotated labels for diagonal provinces. They do not render
+because their inline `style=` attributes reference `LibreBaskerville-Bold` (unavailable to oksvg)
+and oksvg silently discards text elements with unresolvable fonts.
 
-**Fix:** After `stripStyles`, inject a `<g id="province-labels">` layer that places a `<text>`
-element at each province centroid using the `classical.ClassicalVariant.ProvinceLongNames` (or
-abbreviation) data. Font size must scale with the rendered canvas width so labels remain legible
-on both full-board (≈1500 px wide) and zoomed renders.
+**Fix:** In the SVG pre-processing pipeline (before passing to oksvg), rewrite the inline style
+of every `<text>` element in the `names` layer to a minimal style oksvg can handle:
 
-Scaling formula: `fontSize = max(8, canvasWidth / 120)` (tune as needed; document the chosen
-constant in a comment).
+```
+style="font-size:16px;fill:#000000"
+```
+
+Strip `font-family`, `font-variant-*`, `-inkscape-font-specification`, and similar properties.
+Leave `font-size`, `fill`, `text-anchor`, and `writing-mode` intact. The `transform="rotate(…)"`
+attributes must be preserved as they control label orientation.
+
+Font size should also scale with canvas width so labels remain legible on zoomed renders:
+`scaledSize = baseFontSize * (canvasWidth / naturalWidth)` where `naturalWidth` is the SVG's
+viewBox width (≈1524). Apply this scaling in the pipeline step that rewrites font sizes.
 
 **Acceptance criteria:**
-- Full-board render contains `<text>` elements for at least the seven capital provinces
-  (lon, par, ber, mos, rom, vie, con).
-- Zoomed render (`RenderZoomed`) injects labels scaled to the cropped canvas width.
-- A unit test asserts the SVG returned by the label-injection helper contains a `<text>` element
-  for a known province.
+- After pre-processing, `<text>` elements in the names layer have simplified `style=` attributes
+  containing no `font-family` property.
+- Full-board render contains visible text for at least the seven capital provinces
+  (Lon, Par, Ber, Mos, Rom, Vie, Con) — verify by asserting the SVG passed to oksvg contains
+  those `<text>` strings.
+- A unit test covers the style-rewriting helper on a synthetic `<text>` element.
 
 ---
 
 #### Issue 3 — Missing units (not all starting pieces appear)
 
 Several nations show fewer units than their starting position requires (Russia: 0, France: 1,
-Turkey: 1 instead of the correct 3, 3, 3 respectively). The centroid calculation for some
-provinces returns `ok=false` and the unit is silently skipped.
+Turkey: 1 instead of the correct 3, 3, 3 respectively). The root cause is `provinceCenter`
+computing centroids from polygon vertices in the `provinces` layer — this fails for provinces
+whose polygon paths use relative (`m`/`l`/`c`) SVG commands, producing coordinates far outside
+the map bounds (the polygon vertex coordinates are relative offsets, not absolute positions).
 
-Root cause: `extractProvinceShape` searches for the province ID in the SVG by a pattern that
-may not match all province group/path IDs present in the godip SVG (e.g. multicoast provinces
-like `stp`, sea zones, or provinces whose SVG id has a suffix like `_supply`).
+**Fix:** Replace the polygon-averaging approach in `provinceCenter` with a lookup against the
+`province-centers` layer. Each province `X` has a `<path id="XCenter" d="m cx,cy c … z …">`.
+Extract `cx, cy` as the first two numbers in the `d` attribute — these are the absolute
+coordinates of the province visual centre (see SVG structure section above for details).
 
-**Fix:** Broaden the province-shape search in `extractProvinceShape` to handle:
-- `id="<province>"` (current)
-- `id="<province>_supply"` or other suffixed variants
-- Fallback: search for the province's display label as a text element and use its `x`/`y` as
-  the centroid directly when no polygon is found.
+New helper: `provinceCenterFromCenterLayer(svg, province string) (cx, cy float64, ok bool)` —
+searches for `id="<province>Center"`, extracts the first `m` translation, returns the coordinates.
 
-Log (to `stderr`, not silently skip) any province in the units map for which no centroid can
-be determined, so future misses are visible during QA.
+Keep `provinceCenter` as the public API but rewrite its body to call the new helper, falling
+back to the polygon-averaging approach only if the center-layer lookup fails (for forward
+compatibility).
 
 **Acceptance criteria:**
-- A unit test with a synthetic SVG covering a multicoast-style province id confirms the centroid
-  is found.
+- `provinceCenterFromCenterLayer` returns correct coordinates for `vie`, `bud`, `mos`, `stp`,
+  `par`, `lon` against the real godip SVG (verified in an integration-style test that loads
+  `classical.Asset` and checks each coordinate falls within x ∈ [100, 1500], y ∈ [100, 1400]).
 - The functional test `TestCommand_Map_NoArgs` (or a new sub-test with a full 7-nation starting
-  position) asserts the returned SVG contains `<g id="units">` with at least 20 glyph groups
-  (22 starting units total).
+  position) asserts the returned SVG contains `<g id="units">` with 22 glyph groups.
 
 ---
 
@@ -844,26 +903,16 @@ Keep the nation fill colour and white stroke. Keep the "A"/"F" text label centre
 
 ---
 
-#### Issue 5 — Phantom unit in the ocean (bad centroid for a province)
+#### Issue 5 — Phantom unit in the ocean (bad centroid)
 
-One unit (Austrian army at game start, province `vie` or `bud`) appears far off in the ocean
-near Iceland. This is a centroid calculation error: the province's polygon path has a degenerate
-coordinate sequence (e.g. a `<path d="…">` with relative commands that produce bogus absolute
-coordinates when naively split on spaces).
-
-**Fix:** Improve `parseCoordinates` to correctly handle SVG path `d` attribute data containing
-mixed absolute/relative commands. At minimum, strip SVG path command letters (`M`, `L`, `C`,
-`Z`, etc.) before number extraction (the current implementation already does this via regex, but
-verify it handles lowercase relative commands and multi-segment paths).
-
-Add a dedicated test with a realistic `d` string from the godip SVG for `vie` or another
-known-offending province and assert the centroid falls within plausible map bounds
-(x ∈ [500, 1200], y ∈ [200, 900] for the godip classical SVG coordinate space).
+One unit (visible as a red dot near Iceland in the screenshot) is placed far outside the map
+bounds. This is the same root cause as Issue 3: `provinceCenter` averaging relative-command
+polygon vertices produces nonsensical absolute coordinates for some provinces. Fixing Issue 3
+(switching to `province-centers` layer lookup) fixes this automatically.
 
 **Acceptance criteria:**
-- `provinceCenter` for `vie`, `bud`, `mun`, and `mos` all return `ok=true` with coordinates
-  in the expected range.
-- No unit glyph appears outside the map bounding box in a full-board render.
+- No unit glyph has coordinates outside x ∈ [100, 1500], y ∈ [100, 1400] in a full-board render.
+- Covered by the Issue 3 integration test; no separate fix needed once Issue 3 is resolved.
 
 ---
 
@@ -874,12 +923,12 @@ Units should be roughly quarter their current size on the full board, and scale
 proportionally for zoomed renders.
 
 **Fix:** Pass `canvasWidth` into `unitGlyph` (or compute a `scale` factor upstream and pass
-it in). Use `radius = max(6, canvasWidth / 60)` for the bounding radius of the shape
-(tune as needed; document the constant). Font size for the "A"/"F" label scales with the
-same factor: `fontSize = radius * 1.1`.
+it in). Use `side = max(8, int(canvasWidth / 50))` for the army square side length
+(tune as needed; document the constant). Fleet width = `side * 1.3`, fleet height = `side * 0.7`.
+Font size for the "A"/"F" label: `fontSize = side * 0.6`.
 
 **Acceptance criteria:**
-- At `canvasWidth = 1524`, the army square side is ≤ 30 px.
+- At `canvasWidth = 1524`, the army square side is ≤ 32 px.
 - At `canvasWidth = 400` (zoomed), the army square side is ≥ 8 px.
 - `unitGlyph` accepts a `scale float64` parameter (or equivalent); unit tests cover both a
   large-canvas and small-canvas invocation.
@@ -888,22 +937,26 @@ same factor: `fontSize = radius * 1.1`.
 
 #### Issue 7 — Unit glyphs obstruct province labels
 
-Labels injected in Issue 2 must render above unit glyphs so text is always readable.
+Labels must render above unit glyphs. In SVG, later elements paint on top of earlier ones.
+The `names` layer is currently in the SVG body above where `Overlay` injects the units group,
+so units are painted on top of labels.
 
-**Fix:** Inject the label layer after the units layer in the SVG (later elements paint on top):
+**Fix:** In `Overlay`, after injecting `<g id="units">`, also lift the `names` layer group
+(using the same technique as `liftSupplyCenterForeground`) and re-inject it after the units
+group so it paints on top. If the names layer cannot be found (e.g. in tests using synthetic
+SVGs), proceed without lifting it.
 
+Final injection order before `</svg>`:
 ```
-…existing SVG…
 <g id="units">…</g>
-<g id="supply-centers foreground copy">…</g>   ← already lifted by liftSupplyCenterForeground
-<g id="province-labels">…</g>                  ← new: always on top
+<g inkscape:label="supply-centers foreground copy">…</g>
+<g inkscape:label="names">…</g>
 </svg>
 ```
 
 **Acceptance criteria:**
-- In the SVG string returned by `Overlay`, the `<g id="province-labels">` element appears after
-  `<g id="units">`.
-- A unit test on a synthetic SVG asserts this ordering.
+- In the SVG returned by `Overlay`, the `names` group appears after the `units` group.
+- A unit test on a synthetic SVG (containing a `names` group) asserts this ordering.
 
 ---
 
@@ -914,7 +967,7 @@ group after the units layer. Confirm this is functioning correctly end-to-end no
 resized and geometry has changed.
 
 **Fix / verification:**
-- Write a unit test that calls `Overlay` on a synthetic SVG that contains a
+- Write a unit test that calls `Overlay` on a synthetic SVG containing a
   `inkscape:label="supply-centers foreground copy"` group and asserts that group appears after
   `<g id="units">` in the result.
 - If `liftSupplyCenterForeground` is confirmed to work, the test is the acceptance criterion.

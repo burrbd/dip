@@ -23,22 +23,7 @@ See [`PLAN.md`](PLAN.md) for the ordered list of stories and current progress.
 
 ## Architecture
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full component breakdown, data flow, command
-set, and design decisions.
-
-Package layout at a glance:
-
-```
-engine/     — godip wrapper (adapter, parser, phase advance, win detection)
-events/     — structured JSON event log (write, scan, replay)
-session/    — game lifecycle (Session struct, serialization, turn advance, deadlines)
-bot/        — platform-agnostic command router, formatter, autocomplete
-dipmap/     — SVG → PNG rendering, province highlighting, BFS neighborhood
-platform/   — Slack and Telegram adapters
-cmd/        — entry points (slackbot, telegrambot)
-
-game/       — [LEGACY] partial custom adjudicator (preserved, not active development)
-```
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full component breakdown, command set, event types, and phase flow.
 
 ---
 
@@ -107,35 +92,7 @@ access-controlled, and produces the expected event — without mocking the bot o
       rejection test (calling the command in the wrong phase) is acceptable as *additional*
       negative-path coverage but is not a substitute for a happy-path test.
 
-**All 24 commands in ARCHITECTURE.md have functional tests as of Story 9. Story 9d adds `/nations` and `/provinces`.** The mapping is:
-
-| Command | Test function(s) |
-|---|---|
-| `/newgame` | `TestCommand_Newgame` |
-| `/join` | `TestCommand_Join`, `TestCommand_Join_RejectedIfNationTaken` |
-| `/start` | `TestCommand_Start`, `TestCommand_Start_RejectedByNonGM` |
-| `/order` | `TestCommand_Order`, `TestCommand_Order_RejectedForWrongNation` |
-| `/orders` | `TestCommand_Orders` |
-| `/clear` | `TestCommand_Clear` |
-| `/submit` | `TestCommand_Submit_PartialDoesNotAdvance`, `TestCommand_Submit_AllPlayersAdvancesPhase` |
-| `/retreat` | `TestCommand_Retreat_RejectedOutsideRetreatPhase` (phase guard placeholder — Story 6a adds happy-path) |
-| `/disband` | `TestCommand_Disband_RejectedOutsideRetreatAndAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
-| `/build` | `TestCommand_Build_RejectedOutsideAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
-| `/waive` | `TestCommand_Waive_RejectedOutsideAdjustmentPhase` (phase guard placeholder — Story 6a adds happy-path) |
-| `/status` | `TestCommand_Status` |
-| `/history` | `TestCommand_History_BeforeFirstResolution` |
-| `/map` | `TestCommand_Map_NoArgs`, `TestCommand_Map_WithTerritoryAndRadius` |
-| `/help` | `TestCommand_Help_NoArgs`, `TestCommand_Help_WithCommand`, `TestCommand_Help_Rules` |
-| `/nations` | `TestCommand_Nations_NoArgs`, `TestCommand_Nations_WithNation`, `TestCommand_Nations_UnknownNation` |
-| `/provinces` | `TestCommand_Provinces_NoArgs`, `TestCommand_Provinces_WithNation` |
-| `/draw` | `TestCommand_Draw_ProposesOnFirstCall`, `TestCommand_Draw_AllNationsEndGame` |
-| `/concede` | `TestCommand_Concede` |
-| `/pause` | `TestCommand_Pause` |
-| `/resume` | `TestCommand_Resume` |
-| `/extend` | `TestCommand_Extend` |
-| `/force-resolve` | `TestCommand_ForceResolve` |
-| `/boot` | `TestCommand_Boot` |
-| `/replace` | `TestCommand_Replace` |
+All commands in ARCHITECTURE.md have functional tests in `bot/bot_functional_test.go` (one `TestCommand_<Name>` per command).
 
 ---
 

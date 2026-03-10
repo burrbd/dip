@@ -145,42 +145,6 @@ See CLAUDE.md for the full format table.
 
 ---
 
-## What godip provides vs. what the bot layer owns
-
-| Concern | godip | Bot layer |
-|---|---|---|
-| Movement adjudication | ✓ | |
-| Retreat resolution | ✓ | |
-| Build/disband processing | ✓ | |
-| NMR `DefaultOrder()` | ✓ | |
-| Phase sequencing (`Next()`) | ✓ | |
-| Valid retreat destinations | ✓ | |
-| DATC correctness | ✓ | |
-| Win / draw detection | | ✓ |
-| Deadlines / timers | | ✓ |
-| Player notifications | | ✓ |
-| Access control | | ✓ |
-| Command parsing | | ✓ |
-| Map rendering | SVG assets | ✓ render + post |
-| Autocomplete | | ✓ |
-| Event log / persistence | | ✓ |
-| GM tools | | ✓ |
-
----
-
-## Design decisions
-
-| Decision | Choice | Rationale |
-|---|---|---|
-| **Press** | Out of scope — chat IS the press | Players negotiate in the channel; bot handles orders and adjudication only |
-| **Event log** | Snapshot per turn | Bot posts `engine.Dump()` JSON after each resolution; bot restart restores from last snapshot |
-| **GM role** | Game creator is GM | `/newgame` issuer gets admin privileges for that game |
-| **Multi-game** | One game per channel | No game-ID needed in commands; simpler UX |
-| **Order secrecy** | DM-based submission | `/order` commands go to the bot via DM; the player's DM thread is the per-player order log; the game channel only receives resolved state so opponents cannot read pending orders |
-| **Scheduler** | `Scheduler` interface | Decouples deadline logic from execution model; `LocalScheduler` wraps `time.AfterFunc` for server deployments; `EventBridgeScheduler` creates one-time EventBridge Scheduler rules for Lambda |
-
----
-
 ## Full command set
 
 | Category | Command | Phase | Who |

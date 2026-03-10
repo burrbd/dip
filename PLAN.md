@@ -37,6 +37,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 9d — Enhanced Help & Reference Commands
 - [x] Story 9e — Local QA REPL
 - [x] Story 9f — Map Output: JPEG Encoding + SVG Asset Cache
+- [ ] Story 9g — Map Rendering Polish (zoom radius, labels, unit geometry, scale, z-order)
 - [x] Story 10 — Telegram Platform Adapter
 - [x] Story 10a — QA Bot: README Documentation
 - [ ] Story 13 — Lambda / EventBridge Deployment
@@ -739,6 +740,202 @@ without reading source code or implementation plans.
   `retreat`, `disband`, `build`, `waive`) versus channel commands
 - A short example session (newgame → join → start → order → force-resolve → map) is included
 - The section notes that map images are written to temp files and their paths are printed
+
+---
+
+### Story 9g — Map Rendering Polish
+
+**Goal:** Fix eight rendering defects visible in the live map output: broken zoom radius,
+missing province labels, missing/misplaced units, oversized units, wrong unit geometry,
+and z-order issues that let units obscure labels and supply-centre markers.
+
+**Files:** `dipmap/overlay.go`, `dipmap/overlay_test.go`, `dipmap/render.go`,
+`dipmap/render_test.go`, `bot/commands.go`, `bot/commands_test.go`,
+`bot/bot_functional_test.go`
+
+---
+
+#### Issue 1 — `/map <territory> <n>` radius is ignored
+
+`RenderZoomed` receives the highlighted province list but the neighbourhood BFS result is
+not being passed through correctly — the bot calls `Neighborhood` but the radius `n` parsed
+from the command arguments is silently lost, so every zoomed render uses the same single-province
+highlight regardless of the number given.
+
+**Fix:** Trace the `n` argument from command parsing through to `Neighborhood(graph, province, n)`
+and confirm the enlarged province set is forwarded to `RenderZoomed`.
+
+**Acceptance criteria:**
+- `/map lon 1` crops to London + all immediate neighbours.
+- `/map lon 3` crops to a larger region than `/map lon 1`.
+- `TestCommand_Map_WithTerritoryAndRadius` is extended (or a new sub-test added) that asserts
+  the zoomed image has different pixel dimensions than the single-province render.
+
+---
+
+#### Issue 2 — No province labels on the map
+
+The godip SVG contains text label elements for each province but oksvg silently drops
+unsupported or CSS-styled `<text>` elements. No labels appear in the rasterised output.
+
+**Fix:** After `stripStyles`, inject a `<g id="province-labels">` layer that places a `<text>`
+element at each province centroid using the `classical.ClassicalVariant.ProvinceLongNames` (or
+abbreviation) data. Font size must scale with the rendered canvas width so labels remain legible
+on both full-board (≈1500 px wide) and zoomed renders.
+
+Scaling formula: `fontSize = max(8, canvasWidth / 120)` (tune as needed; document the chosen
+constant in a comment).
+
+**Acceptance criteria:**
+- Full-board render contains `<text>` elements for at least the seven capital provinces
+  (lon, par, ber, mos, rom, vie, con).
+- Zoomed render (`RenderZoomed`) injects labels scaled to the cropped canvas width.
+- A unit test asserts the SVG returned by the label-injection helper contains a `<text>` element
+  for a known province.
+
+---
+
+#### Issue 3 — Missing units (not all starting pieces appear)
+
+Several nations show fewer units than their starting position requires (Russia: 0, France: 1,
+Turkey: 1 instead of the correct 3, 3, 3 respectively). The centroid calculation for some
+provinces returns `ok=false` and the unit is silently skipped.
+
+Root cause: `extractProvinceShape` searches for the province ID in the SVG by a pattern that
+may not match all province group/path IDs present in the godip SVG (e.g. multicoast provinces
+like `stp`, sea zones, or provinces whose SVG id has a suffix like `_supply`).
+
+**Fix:** Broaden the province-shape search in `extractProvinceShape` to handle:
+- `id="<province>"` (current)
+- `id="<province>_supply"` or other suffixed variants
+- Fallback: search for the province's display label as a text element and use its `x`/`y` as
+  the centroid directly when no polygon is found.
+
+Log (to `stderr`, not silently skip) any province in the units map for which no centroid can
+be determined, so future misses are visible during QA.
+
+**Acceptance criteria:**
+- A unit test with a synthetic SVG covering a multicoast-style province id confirms the centroid
+  is found.
+- The functional test `TestCommand_Map_NoArgs` (or a new sub-test with a full 7-nation starting
+  position) asserts the returned SVG contains `<g id="units">` with at least 20 glyph groups
+  (22 starting units total).
+
+---
+
+#### Issue 4 — Units are circles; armies and fleets need distinct geometry
+
+Current `unitGlyph` renders every unit as `<circle r="25">`. Traditional Diplomacy uses a
+filled square for armies and a narrow filled rectangle for fleets.
+
+**Fix:** Replace the `<circle>` with:
+- **Army:** `<rect width="40" height="40" x="-20" y="-20" rx="4" ry="4" …/>` (square with
+  slight rounding)
+- **Fleet:** `<rect width="50" height="28" x="-25" y="-14" rx="4" ry="4" …/>` (wider, shorter
+  rectangle)
+
+Keep the nation fill colour and white stroke. Keep the "A"/"F" text label centred inside.
+
+**Acceptance criteria:**
+- `unitGlyph` for `Type="Army"` produces SVG containing `<rect` with equal `width`/`height`.
+- `unitGlyph` for `Type="Fleet"` produces SVG containing `<rect` with `width > height`.
+- No `<circle` element appears in the output of `unitGlyph`.
+- All existing unit-glyph unit tests updated accordingly.
+
+---
+
+#### Issue 5 — Phantom unit in the ocean (bad centroid for a province)
+
+One unit (Austrian army at game start, province `vie` or `bud`) appears far off in the ocean
+near Iceland. This is a centroid calculation error: the province's polygon path has a degenerate
+coordinate sequence (e.g. a `<path d="…">` with relative commands that produce bogus absolute
+coordinates when naively split on spaces).
+
+**Fix:** Improve `parseCoordinates` to correctly handle SVG path `d` attribute data containing
+mixed absolute/relative commands. At minimum, strip SVG path command letters (`M`, `L`, `C`,
+`Z`, etc.) before number extraction (the current implementation already does this via regex, but
+verify it handles lowercase relative commands and multi-segment paths).
+
+Add a dedicated test with a realistic `d` string from the godip SVG for `vie` or another
+known-offending province and assert the centroid falls within plausible map bounds
+(x ∈ [500, 1200], y ∈ [200, 900] for the godip classical SVG coordinate space).
+
+**Acceptance criteria:**
+- `provinceCenter` for `vie`, `bud`, `mun`, and `mos` all return `ok=true` with coordinates
+  in the expected range.
+- No unit glyph appears outside the map bounding box in a full-board render.
+
+---
+
+#### Issue 6 — Units are too large; size must scale with canvas
+
+At the default canvas size (≈1524 × 1357 px) a circle radius of 25 px looks enormous.
+Units should be roughly quarter their current size on the full board, and scale
+proportionally for zoomed renders.
+
+**Fix:** Pass `canvasWidth` into `unitGlyph` (or compute a `scale` factor upstream and pass
+it in). Use `radius = max(6, canvasWidth / 60)` for the bounding radius of the shape
+(tune as needed; document the constant). Font size for the "A"/"F" label scales with the
+same factor: `fontSize = radius * 1.1`.
+
+**Acceptance criteria:**
+- At `canvasWidth = 1524`, the army square side is ≤ 30 px.
+- At `canvasWidth = 400` (zoomed), the army square side is ≥ 8 px.
+- `unitGlyph` accepts a `scale float64` parameter (or equivalent); unit tests cover both a
+  large-canvas and small-canvas invocation.
+
+---
+
+#### Issue 7 — Unit glyphs obstruct province labels
+
+Labels injected in Issue 2 must render above unit glyphs so text is always readable.
+
+**Fix:** Inject the label layer after the units layer in the SVG (later elements paint on top):
+
+```
+…existing SVG…
+<g id="units">…</g>
+<g id="supply-centers foreground copy">…</g>   ← already lifted by liftSupplyCenterForeground
+<g id="province-labels">…</g>                  ← new: always on top
+</svg>
+```
+
+**Acceptance criteria:**
+- In the SVG string returned by `Overlay`, the `<g id="province-labels">` element appears after
+  `<g id="units">`.
+- A unit test on a synthetic SVG asserts this ordering.
+
+---
+
+#### Issue 8 — Unit glyphs obstruct supply-centre markers
+
+The existing `liftSupplyCenterForeground` mechanism re-injects the supply-centre foreground copy
+group after the units layer. Confirm this is functioning correctly end-to-end now that units are
+resized and geometry has changed.
+
+**Fix / verification:**
+- Write a unit test that calls `Overlay` on a synthetic SVG that contains a
+  `inkscape:label="supply-centers foreground copy"` group and asserts that group appears after
+  `<g id="units">` in the result.
+- If `liftSupplyCenterForeground` is confirmed to work, the test is the acceptance criterion.
+  If not, fix the lifting logic.
+
+**Acceptance criteria:**
+- `TestOverlay_SupplyCentreForegroundLiftedAboveUnits` passes: the supply-centre foreground
+  group appears after the units group in the output SVG.
+- This test was already implied by Story 9b but is now made explicit.
+
+---
+
+#### Combined acceptance criteria
+
+- All eight individual acceptance criteria above are met.
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
+- No `<circle` elements appear in the units layer of any rendered SVG.
+- A full-board `/map` render with all 22 starting units produces a JPEG where all unit glyphs
+  are inside the map bounds, province labels are visible, and supply-centre markers are not
+  hidden beneath unit shapes.
 
 ---
 

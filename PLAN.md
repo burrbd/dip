@@ -992,6 +992,146 @@ resized and geometry has changed.
 
 ---
 
+### Story 9h — Pre-populate SVG with unit placeholder glyphs
+
+**Goal:** Produce a hand-editable SVG (`dipmap/assets/map.svg`) that is our own copy of the
+godip classical map, augmented with one army glyph and one fleet glyph for every province
+centre. All glyphs start invisible (`display:none`). The bot's `Overlay` function is then
+rewritten to activate glyphs by ID (setting `display:inline` and `fill`) rather than computing
+centroids and injecting SVG at runtime.
+
+After the agent completes this story, the owner opens `dipmap/assets/map.svg` in Inkscape and
+manually adjusts glyph positions to taste. The bot code is unaffected by those manual tweaks —
+it only reads IDs, not coordinates.
+
+This story supersedes Story 9g Issues 3, 4, 5, and 6 (unit placement, unit geometry, phantom
+units, and unit scaling). Issues 1, 2, 7, and 8 from Story 9g are unaffected.
+
+**Files:**
+- `cmd/mkapsvg/main.go` — new one-off generator (keep it; it documents how the SVG was built)
+- `dipmap/assets/map.svg` — new file: populated copy of the godip SVG
+- `dipmap/render.go` — update asset loading to use our SVG instead of godip's
+- `dipmap/overlay.go` — rewrite unit injection to use ID-based attribute setting
+- `dipmap/overlay_test.go` — updated tests
+
+---
+
+#### Part A — Generate the populated SVG
+
+Write `cmd/mkapsvg/main.go`. It must:
+
+1. Load the godip classical SVG via `classical.Asset("svg/map.svg")`.
+
+2. Find every province centre marker using the regex `id="([^"]+)Center"`. There are exactly
+   81 such markers (75 base provinces + 6 coastal variants: `bul/ec`, `bul/sc`, `stp/nc`,
+   `stp/sc`, `spa/nc`, `spa/sc`). Each has `d="m cx,cy …"` — the centroid is the first two
+   numbers in the `d` attribute (the translation of the first `m` sub-path).
+
+3. For each province `p` with centroid `(cx, cy)`, generate two `<g>` elements and insert them
+   as children of the `<g id="units">` layer:
+
+   ```xml
+   <g id="unit-{pid}-army"  transform="translate({cx},{cy})" display="none">
+     <rect x="-12" y="-12" width="24" height="24" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
+     <text x="0" y="5" text-anchor="middle" font-size="14" fill="#000000">A</text>
+   </g>
+   <g id="unit-{pid}-fleet" transform="translate({cx},{cy})" display="none">
+     <rect x="-15" y="-9" width="30" height="18" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
+     <text x="0" y="5" text-anchor="middle" font-size="10" fill="#000000">F</text>
+   </g>
+   ```
+
+   Where `{pid}` is the province name with `/` replaced by `-` (e.g. `stp/nc` → `unit-stp-nc-fleet`).
+   Use a fixed placeholder fill (`#cccccc`) — the bot will set the real nation colour at render time.
+
+4. For the three provinces that have coastal variants (`bul`, `spa`, `stp`), **also** emit army
+   glyphs at the base province centre (the bot will only ever activate armies at the base, never
+   at the coastal variant). For coastal variant IDs (`bul/ec`, `bul/sc`, etc.) emit **fleet only**
+   (no army glyph).
+
+5. Write the result to `dipmap/assets/map.svg` (create the directory if needed).
+
+6. Print a summary: total centres found, total glyphs written.
+
+**Acceptance criteria for Part A:**
+- `go run ./cmd/mkapsvg/` completes without error and writes `dipmap/assets/map.svg`.
+- The output SVG contains exactly 81 `unit-…-fleet` elements and 75 `unit-…-army` elements
+  (coastal variant positions are fleet-only).
+- Every `<g id="unit-…">` has `display="none"`.
+- A unit test in `cmd/mkapsvg/main_test.go` loads the generated SVG and asserts these counts
+  using a regex or XML parser. The test should run the generator against a real or synthetic
+  input and check the output.
+
+---
+
+#### Part B — Switch asset loading and simplify Overlay
+
+**Render.go:** Replace the call to `classical.Asset("svg/map.svg")` with a read of the embedded
+`dipmap/assets/map.svg`. Use `//go:embed assets/map.svg` in `render.go` (or a new `assets.go`
+file in the `dipmap` package).
+
+**Overlay.go — unit injection rewrite:**
+
+The current approach computes a centroid per province and injects SVG markup. Replace it with:
+
+```go
+func injectUnits(svg string, units map[string]UnitInfo) string {
+    for province, u := range units {
+        pid := strings.ReplaceAll(province, "/", "-")
+        id := fmt.Sprintf("unit-%s-%s", pid, strings.ToLower(u.Type))
+        colour := nationColour(u.Nation)
+        svg = setAttr(svg, id, "display", "inline")
+        svg = setAttr(svg, id, "fill", colour)   // sets fill on the <g>; children inherit
+    }
+    return svg
+}
+```
+
+`setAttr(svg, id, attr, val string) string` — a small helper that finds
+`id="<id>"` in the SVG and updates or inserts the named attribute on that element.
+If the element is not found (unknown province), log to `stderr` and continue.
+
+Remove `provinceCenter`, `extractProvinceShape`, `parseCoordinates`, `unitGlyph`, and all
+centroid-computation code from `overlay.go` — it is no longer needed.
+
+**Acceptance criteria for Part B:**
+- `dipmap.Overlay` no longer contains centroid computation or glyph injection code.
+- `setAttr` is tested with a synthetic SVG snippet; edge cases: attribute already present
+  (must update, not duplicate), attribute absent (must add), element not found (no-op + log).
+- A full-board overlay with all 22 starting units produces an SVG where 22 `unit-…` elements
+  have `display="inline"` and the correct nation fill colour.
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/`.
+
+---
+
+#### Naming convention reference
+
+| Province  | Army glyph ID          | Fleet glyph ID(s)                        |
+|-----------|------------------------|------------------------------------------|
+| `lon`     | `unit-lon-army`        | `unit-lon-fleet`                         |
+| `mos`     | `unit-mos-army`        | `unit-mos-fleet` (never activated)       |
+| `stp`     | `unit-stp-army`        | — (no base fleet; use coastal variants)  |
+| `stp/nc`  | — (no army)            | `unit-stp-nc-fleet`                      |
+| `stp/sc`  | — (no army)            | `unit-stp-sc-fleet`                      |
+| `bul/ec`  | — (no army)            | `unit-bul-ec-fleet`                      |
+
+Godip uses the coast-qualified name (e.g. `"stp/nc"`) as the province key when a fleet
+is in a coastal position. The bot passes this key directly to `injectUnits`; the `pid`
+normalisation (`/` → `-`) must happen inside `injectUnits`, not in the caller.
+
+---
+
+#### Combined acceptance criteria
+
+- `go run ./cmd/mkapsvg/` produces a valid SVG with 156 unit placeholder elements.
+- `dipmap.Overlay` activates exactly the right glyphs for a given game state (verified by
+  counting `display="inline"` elements in the output).
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `cmd/mkapsvg/`.
+- `go test -v -tags functional ./bot/` passes.
+- No centroid-computation or glyph-injection code remains in `dipmap/`.
+
+---
+
 ### Story 13 — Lambda / EventBridge Deployment
 
 **Goal:** Refactor session scheduling to a `Scheduler` interface and wire up a Lambda entry

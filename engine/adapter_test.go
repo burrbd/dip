@@ -357,10 +357,20 @@ func TestAdvance_SkipsEmptyAdjustment(t *testing.T) {
 	adj := newMockAdj()
 	adj.phase = &mockPhase{typ: godip.Movement, year: 1901, season: godip.Fall}
 
-	// First Next() goes to an empty adjustment phase (no units).
+	// First Next() goes to an empty adjustment phase: England has 3 SCs and
+	// 3 units so no builds or disbands are required.
 	adjustAdj := newMockAdj()
 	adjustAdj.phase = &mockPhase{typ: godip.Adjustment, year: 1901, season: godip.Fall}
-	// units is empty by default in newMockAdj
+	adjustAdj.units = map[godip.Province]godip.Unit{
+		"lon": {Type: godip.Fleet, Nation: "England"},
+		"edi": {Type: godip.Fleet, Nation: "England"},
+		"lvp": {Type: godip.Army, Nation: "England"},
+	}
+	adjustAdj.supplyCenters = map[godip.Province]godip.Nation{
+		"lon": "England",
+		"edi": "England",
+		"lvp": "England",
+	}
 
 	// Second Next() goes to Spring movement.
 	springAdj := newMockAdj()
@@ -374,6 +384,84 @@ func TestAdvance_SkipsEmptyAdjustment(t *testing.T) {
 
 	is.NoErr(err)
 	is.Equal(g.adj, gameState(springAdj))
+}
+
+func TestIsEmptyPhase_AdjustmentNeedsBuilds(t *testing.T) {
+	// England has 4 SCs but only 3 units → needs 1 build → not empty.
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Adjustment, year: 1901, season: godip.Fall}
+	adj.units = map[godip.Province]godip.Unit{
+		"lon": {Type: godip.Fleet, Nation: "England"},
+		"edi": {Type: godip.Fleet, Nation: "England"},
+		"lvp": {Type: godip.Army, Nation: "England"},
+	}
+	adj.supplyCenters = map[godip.Province]godip.Nation{
+		"lon": "England",
+		"edi": "England",
+		"lvp": "England",
+		"nwy": "England", // captured Norway
+	}
+	if isEmptyPhase(adj) {
+		t.Error("isEmptyPhase should return false when England needs 1 build")
+	}
+}
+
+func TestIsEmptyPhase_AdjustmentNeedsDisbands(t *testing.T) {
+	// Austria has 2 SCs but 3 units → needs 1 disband → not empty.
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Adjustment, year: 1901, season: godip.Fall}
+	adj.units = map[godip.Province]godip.Unit{
+		"vie": {Type: godip.Army, Nation: "Austria"},
+		"bud": {Type: godip.Army, Nation: "Austria"},
+		"tri": {Type: godip.Fleet, Nation: "Austria"},
+	}
+	adj.supplyCenters = map[godip.Province]godip.Nation{
+		"vie": "Austria",
+		"bud": "Austria",
+		// tri lost to Italy
+	}
+	if isEmptyPhase(adj) {
+		t.Error("isEmptyPhase should return false when Austria needs 1 disband")
+	}
+}
+
+func TestIsEmptyPhase_AdjustmentUnitsWithNoSCs(t *testing.T) {
+	// A nation has units but zero supply centres (all captured) → must disband → not empty.
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Adjustment, year: 1901, season: godip.Fall}
+	adj.units = map[godip.Province]godip.Unit{
+		"vie": {Type: godip.Army, Nation: "Austria"},
+	}
+	// Austria has no supply centres left.
+	adj.supplyCenters = map[godip.Province]godip.Nation{}
+	if isEmptyPhase(adj) {
+		t.Error("isEmptyPhase should return false when a nation has units but no supply centres")
+	}
+}
+
+func TestIsEmptyPhase_AdjustmentAllBalanced(t *testing.T) {
+	// All nations have equal SCs and units → adjustment phase is empty.
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Adjustment, year: 1901, season: godip.Fall}
+	adj.units = map[godip.Province]godip.Unit{
+		"lon": {Type: godip.Fleet, Nation: "England"},
+		"edi": {Type: godip.Fleet, Nation: "England"},
+		"lvp": {Type: godip.Army, Nation: "England"},
+		"par": {Type: godip.Army, Nation: "France"},
+		"bre": {Type: godip.Fleet, Nation: "France"},
+		"mar": {Type: godip.Army, Nation: "France"},
+	}
+	adj.supplyCenters = map[godip.Province]godip.Nation{
+		"lon": "England",
+		"edi": "England",
+		"lvp": "England",
+		"par": "France",
+		"bre": "France",
+		"mar": "France",
+	}
+	if !isEmptyPhase(adj) {
+		t.Error("isEmptyPhase should return true when all nations have equal SCs and units")
+	}
 }
 
 func TestLoad_CreatesEngine(t *testing.T) {

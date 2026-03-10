@@ -504,6 +504,13 @@ func (d *Dispatcher) handleRetreat(cmd Command) (string, error) {
 	}); err != nil {
 		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
 	}
+	sess.Submitted[nation] = true
+	if allRetreatActionsSubmitted(sess) {
+		if err := sess.AdvanceTurn(); err != nil {
+			return "", fmt.Errorf("bot: advance turn: %w", err)
+		}
+		return fmt.Sprintf("Retreat order staged: %s. All required orders received — resolving now!", orderText), nil
+	}
 	return fmt.Sprintf("Retreat order staged: %s", orderText), nil
 }
 
@@ -548,6 +555,22 @@ func (d *Dispatcher) handleDisband(cmd Command) (string, error) {
 	}); err != nil {
 		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
 	}
+	sess.Submitted[nation] = true
+	if isRetreatPhase(sess.Phase) {
+		if allRetreatActionsSubmitted(sess) {
+			if err := sess.AdvanceTurn(); err != nil {
+				return "", fmt.Errorf("bot: advance turn: %w", err)
+			}
+			return fmt.Sprintf("Disband order staged: %s. All required orders received — resolving now!", orderText), nil
+		}
+	} else {
+		if allAdjustmentActionsSubmitted(sess) {
+			if err := sess.AdvanceTurn(); err != nil {
+				return "", fmt.Errorf("bot: advance turn: %w", err)
+			}
+			return fmt.Sprintf("Disband order staged: %s. All required orders received — resolving now!", orderText), nil
+		}
+	}
 	return fmt.Sprintf("Disband order staged: %s", orderText), nil
 }
 
@@ -585,6 +608,13 @@ func (d *Dispatcher) handleBuild(cmd Command) (string, error) {
 	}); err != nil {
 		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
 	}
+	sess.Submitted[nation] = true
+	if allAdjustmentActionsSubmitted(sess) {
+		if err := sess.AdvanceTurn(); err != nil {
+			return "", fmt.Errorf("bot: advance turn: %w", err)
+		}
+		return fmt.Sprintf("Build order staged: %s. All required orders received — resolving now!", orderText), nil
+	}
 	return fmt.Sprintf("Build order staged: %s", orderText), nil
 }
 
@@ -607,6 +637,21 @@ func (d *Dispatcher) handleWaive(cmd Command) (string, error) {
 		return "", fmt.Errorf("bot: you are not a player in this game")
 	}
 	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], "Waive")
+	if err := events.WriteDM(d.ch, cmd.UserID, events.TypeOrderSubmitted, events.OrderSubmitted{
+		UserID: cmd.UserID,
+		Nation: nation,
+		Orders: []string{"Waive"},
+		Phase:  sess.Phase,
+	}); err != nil {
+		return "", fmt.Errorf("bot: write OrderSubmitted: %w", err)
+	}
+	sess.Submitted[nation] = true
+	if allAdjustmentActionsSubmitted(sess) {
+		if err := sess.AdvanceTurn(); err != nil {
+			return "", fmt.Errorf("bot: advance turn: %w", err)
+		}
+		return "Waive order staged. All required orders received — resolving now!", nil
+	}
 	return "Waive order staged.", nil
 }
 
@@ -1432,6 +1477,39 @@ func (d *Dispatcher) handleReplace(cmd Command) (string, error) {
 	delete(sess.Players, oldUserID)
 	sess.Players[newUserID] = nation
 	return fmt.Sprintf("%s is now playing as %s.", newUserID, nation), nil
+}
+
+// allAdjustmentActionsSubmitted returns true when every nation that has a
+// non-zero supply-centre delta (needs builds or disbands) has set
+// sess.Submitted[nation] = true. Nations whose SC and unit counts are equal
+// have no required orders and are not checked.
+func allAdjustmentActionsSubmitted(sess *session.Session) bool {
+	scCounts := sess.Eng.SupplyCenters() // map[nation]int
+	unitCounts := map[string]int{}
+	for _, u := range sess.Eng.Units() {
+		unitCounts[u.Nation]++
+	}
+	for _, nation := range sess.Players {
+		if scCounts[nation] != unitCounts[nation] && !sess.Submitted[nation] {
+			return false
+		}
+	}
+	return true
+}
+
+// allRetreatActionsSubmitted returns true when every nation that has at least
+// one dislodged unit has set sess.Submitted[nation] = true.
+func allRetreatActionsSubmitted(sess *session.Session) bool {
+	nationsDislodged := map[string]bool{}
+	for _, nation := range sess.Eng.Dislodgeds() {
+		nationsDislodged[nation] = true
+	}
+	for nation := range nationsDislodged {
+		if !sess.Submitted[nation] {
+			return false
+		}
+	}
+	return true
 }
 
 // allNationsSubmitted reads each player's DM thread to check whether every

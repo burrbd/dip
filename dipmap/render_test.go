@@ -301,3 +301,101 @@ func TestRenderZoomedWith_EncoderError_ReturnsError(t *testing.T) {
 	_, err := renderZoomedWith(stubEngineState{}, []byte(renderTestSVG), []string{"foo"}, failEncoder)
 	is.NotNil(err)
 }
+
+func TestRenderZoomedWith_NoDimensions_EncoderError_ReturnsError(t *testing.T) {
+	is := is.New(t)
+	// SVG with no viewBox and no width/height; empty provinces → vw=0, vh=0
+	// → blank-canvas path; encoder error propagates.
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`)
+	_, err := renderZoomedWith(stubEngineState{}, svg, nil, failEncoder)
+	is.NotNil(err)
+}
+
+func TestRenderZoomedWith_ParseError_ReturnsError(t *testing.T) {
+	is := is.New(t)
+	// SVG has a valid province shape (for bounding-box extraction) but
+	// malformed XML so oksvg.ReadIconStream returns an error.
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">` +
+		`<polygon inkscape:label="foo" points="10,10 20,10 20,20 10,20" id="foo"/>` +
+		`<unclosed`)
+	_, err := renderZoomedWith(stubEngineState{}, svg, []string{"foo"}, jpegEncode)
+	is.NotNil(err)
+}
+
+func TestRenderZoomed_WithMatchingProvinces_RendersContent(t *testing.T) {
+	is := is.New(t)
+	// Province "bar" at (50,50)-(80,80) with an explicit red fill.
+	// After zoom the rendered output should contain non-white pixels.
+	svgWithFill := `<?xml version="1.0"?>` +
+		`<svg xmlns="http://www.w3.org/2000/svg"` +
+		` xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"` +
+		` viewBox="0 0 100 100" width="100" height="100">` +
+		`<g id="highlights"/>` +
+		`<polygon inkscape:label="bar" points="50,50 80,50 80,80 50,80" id="bar" fill="red"/>` +
+		`</svg>`
+	result, err := RenderZoomed(stubEngineState{}, []byte(svgWithFill), []string{"bar"})
+	is.NoErr(err)
+	img, err := jpeg.Decode(bytes.NewReader(result))
+	is.NoErr(err)
+	bounds := img.Bounds()
+	hasNonWhite := false
+	for y := bounds.Min.Y; y < bounds.Max.Y; y += 20 {
+		for x := bounds.Min.X; x < bounds.Max.X; x += 20 {
+			r, g, b, _ := img.At(x, y).RGBA()
+			if r < 0xF000 || g < 0xF000 || b < 0xF000 {
+				hasNonWhite = true
+			}
+		}
+	}
+	if !hasNonWhite {
+		t.Error("expected non-white pixels in zoomed render, but got all-white image")
+	}
+}
+
+// ---- prepareForRender -------------------------------------------------------
+
+func TestPrepareForRender_DisplayNoneBecomesOpacityZero(t *testing.T) {
+	svg := []byte(`<g style="display:none;opacity:1" id="provinces">content</g>`)
+	result := prepareForRender(svg)
+	if bytes.Contains(result, []byte("display:none")) {
+		t.Error("expected display:none to be removed")
+	}
+	if !bytes.Contains(result, []byte("opacity:0")) {
+		t.Error("expected opacity:0 to be injected")
+	}
+}
+
+func TestPrepareForRender_DisplayInlineUnchanged(t *testing.T) {
+	svg := []byte(`<g style="display:inline">`)
+	result := prepareForRender(svg)
+	if string(result) != `<g style="display:inline">` {
+		t.Errorf("unexpected change: %s", result)
+	}
+}
+
+func TestPrepareForRender_NoDisplay_Unchanged(t *testing.T) {
+	svg := []byte(`<g style="fill:red">`)
+	result := prepareForRender(svg)
+	if string(result) != `<g style="fill:red">` {
+		t.Errorf("unexpected change: %s", result)
+	}
+}
+
+func TestSVGToJPEGWith_DisplayNoneGroupInvisible(t *testing.T) {
+	is := is.New(t)
+	// A display:none group containing a black rect over a white background.
+	// After prepareForRender the black rect should be invisible.
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">` +
+		`<rect width="10" height="10" fill="white"/>` +
+		`<g style="display:none"><rect width="10" height="10" fill="black"/></g>` +
+		`</svg>`)
+	result, err := svgToJPEGWith(svg, jpegEncode)
+	is.NoErr(err)
+	img, err := jpeg.Decode(bytes.NewReader(result))
+	is.NoErr(err)
+	// Centre pixel should be white (black rect is hidden).
+	r, g, b, _ := img.At(5, 5).RGBA()
+	if r < 0xE000 || g < 0xE000 || b < 0xE000 {
+		t.Errorf("expected white pixel at centre; got RGBA(%d,%d,%d)", r, g, b)
+	}
+}

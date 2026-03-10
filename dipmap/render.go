@@ -92,8 +92,18 @@ func svgToJPEG(svg []byte) ([]byte, error) {
 // and highlight layers already applied) to a JPEG byte slice.
 func SVGToJPEG(svg []byte) ([]byte, error) { return svgToJPEG(svg) }
 
+// prepareForRender converts style="display:none" groups to style="opacity:0"
+// because oksvg does not support the CSS display property. Without this
+// substitution, layers that are intended to be invisible (e.g. the province
+// hit-area layer) are rendered as fully-opaque black shapes on top of the map.
+func prepareForRender(svg []byte) []byte {
+	re := regexp.MustCompile(`style="[^"]*\bdisplay\s*:\s*none\b[^"]*"`)
+	return re.ReplaceAll(svg, []byte(`style="opacity:0"`))
+}
+
 // svgToJPEGWith is the testable core of svgToJPEG with an injectable encoder.
 func svgToJPEGWith(svg []byte, encoderFn func(io.Writer, image.Image) error) ([]byte, error) {
+	svg = prepareForRender(svg)
 	svgStr := string(svg)
 	// Prefer viewBox for natural dimensions (godip SVGs use width="100%").
 	_, _, vw, vh := parseSVGViewBox(svgStr)
@@ -166,19 +176,21 @@ func renderZoomedWith(_ EngineState, svg []byte, provinces []string, encoderFn f
 		}
 	}
 
-	var vw, vh float64
+	var vbX, vbY, vw, vh float64
 	if hasBounds {
 		dx := maxX - minX
 		dy := maxY - minY
 		diag := math.Sqrt(dx*dx + dy*dy)
 		pad := diag * 0.05
+		vbX = minX - pad
+		vbY = minY - pad
 		vw = dx + 2*pad
 		vh = dy + 2*pad
 	} else {
-		_, _, vw, vh = parseSVGViewBox(svgStr)
+		vbX, vbY, vw, vh = parseSVGViewBox(svgStr)
 		if vw <= 0 || vh <= 0 {
 			fw, fh := parseSVGDimensions([]byte(svgStr))
-			vw, vh = float64(fw), float64(fh)
+			vbX, vbY, vw, vh = 0, 0, float64(fw), float64(fh)
 		}
 	}
 
@@ -188,8 +200,37 @@ func renderZoomedWith(_ EngineState, svg []byte, provinces []string, encoderFn f
 		outH = int(float64(outputWidth) * vh / vw)
 	}
 
+	// When we have no usable canvas dimensions (SVG has no viewBox or numeric
+	// width/height), return a blank canvas — there is nothing to render.
+	if vw <= 0 || vh <= 0 {
+		img := image.NewRGBA(image.Rect(0, 0, outputWidth, outH))
+		draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+		var buf bytes.Buffer
+		if err := encoderFn(&buf, img); err != nil {
+			return nil, fmt.Errorf("dipmap: encode image: %w", err)
+		}
+		return buf.Bytes(), nil
+	}
+
+	renderSVG := prepareForRender(svg)
+
+	icon, err := oksvg.ReadIconStream(bytes.NewReader(renderSVG))
+	if err != nil {
+		return nil, fmt.Errorf("dipmap: parse SVG: %w", err)
+	}
+	// oksvg's SetTarget does not scale the viewBox origin offset (it produces
+	// E = -vbX instead of E = -vbX*scaleW), which breaks cropped viewports.
+	// Set the transform matrix directly: scale then translate so that the
+	// crop region (vbX, vbY, vw, vh) maps exactly to (0, 0, outputWidth, outH).
+	scaleW := float64(outputWidth) / vw
+	scaleH := float64(outH) / vh
+	icon.Transform = rasterx.Identity.Scale(scaleW, scaleH).Translate(-vbX, -vbY)
 	img := image.NewRGBA(image.Rect(0, 0, outputWidth, outH))
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
+	scanner := rasterx.NewScannerGV(outputWidth, outH, img, img.Bounds())
+	raster := rasterx.NewDasher(outputWidth, outH, scanner)
+	icon.Draw(raster, 1.0)
+
 	var buf bytes.Buffer
 	if err := encoderFn(&buf, img); err != nil {
 		return nil, fmt.Errorf("dipmap: encode image: %w", err)

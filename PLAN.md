@@ -24,8 +24,8 @@ Never mark a story done if any test is failing or any criterion is unmet.
 
 - [x] Story 9g — Map Rendering Polish (zoom radius, labels, unit geometry, scale, z-order)
 - [x] Story 9h — Pre-populate SVG with unit placeholder glyphs
-- [ ] Story 10a — SVG Simplification: Strip Inkscape Metadata
-- [ ] Story 10b — Map Rendering Fixes: Labels, Unit Colours, and Glyph Geometry
+- [x] Story 10a — SVG Simplification: Strip Inkscape Metadata
+- [x] Story 10b — Map Rendering Fixes: Labels, Unit Colours, and Glyph Geometry
 - [ ] Story 10c — Zoomed /map with Territory and Radius (deferred)
 - [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter

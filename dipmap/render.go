@@ -122,10 +122,11 @@ func prepareForRender(svg []byte) []byte {
 	return svg
 }
 
-// rewriteTextStyles rewrites the inline style= attribute of every <text>
-// element so that oksvg can render them. The godip SVG uses LibreBaskerville-Bold
-// which oksvg cannot resolve, silently dropping all text elements. This
-// function replaces the style with a minimal form: font-size and fill only.
+// rewriteTextStyles rewrites the inline style= attribute of every <text> and
+// <tspan> element so that oksvg can render them. The godip SVG uses
+// LibreBaskerville-Bold which oksvg cannot resolve, silently dropping all text
+// elements that reference it. This function replaces the style with a minimal
+// form: font-size and fill only.
 // Font size is scaled by (canvasWidth / naturalWidth) so that labels stay
 // legible across both full-board and zoomed renders.
 func rewriteTextStyles(svg []byte, canvasWidth float64) []byte {
@@ -139,7 +140,7 @@ func rewriteTextStyles(svg []byte, canvasWidth float64) []byte {
 	}
 	newStyle := fmt.Sprintf(`style="font-size:%.0fpx;fill:#000000"`, size)
 	styleRe := regexp.MustCompile(`\bstyle="[^"]*"`)
-	textRe := regexp.MustCompile(`<text\b[^>]*>`)
+	textRe := regexp.MustCompile(`<(?:text|tspan)\b[^>]*>`)
 	return textRe.ReplaceAllFunc(svg, func(tag []byte) []byte {
 		if styleRe.Match(tag) {
 			return styleRe.ReplaceAll(tag, []byte(newStyle))

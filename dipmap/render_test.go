@@ -445,6 +445,45 @@ func TestRewriteTextStyles_NonTextElement_Unchanged(t *testing.T) {
 	}
 }
 
+func TestRewriteTextStyles_HandlesTspan(t *testing.T) {
+	// <tspan> elements with font-family in their style must be rewritten just
+	// like <text> elements (Bug 1 fix: some capital labels use <tspan style=...>).
+	svg := []byte(`<svg><text><tspan style="font-family:LibreBaskerville-Bold;font-size:16px">Paris</tspan></text></svg>`)
+	result := rewriteTextStyles(svg, naturalWidth)
+	s := string(result)
+	if strings.Contains(s, "font-family") {
+		t.Error("expected font-family to be stripped from tspan style")
+	}
+	if !strings.Contains(s, "font-size") {
+		t.Error("expected font-size to be retained after tspan rewrite")
+	}
+	if !strings.Contains(s, "Paris") {
+		t.Error("expected text content to be preserved after tspan rewrite")
+	}
+}
+
+// TestEmbeddedSVG_ContainsCapitalLabels verifies that the embedded map SVG
+// contains province name text for the seven Diplomacy capitals after the
+// text-style rewriting applied by the render pipeline (Bug 1 acceptance criterion).
+func TestEmbeddedSVG_ContainsCapitalLabels(t *testing.T) {
+	svg, err := loadEmbeddedSVG()
+	if err != nil {
+		t.Fatalf("loadEmbeddedSVG: %v", err)
+	}
+	// Apply the same text-style rewrite used by the render pipeline.
+	_, _, vw, _ := parseSVGViewBox(string(svg))
+	processed := rewriteTextStyles(svg, vw)
+	s := string(processed)
+
+	// The names layer must contain the text content for each capital province.
+	capitals := []string{"London", "Paris", "Berlin", "Moscow", "Rome", "Vienna", "Constantinople"}
+	for _, label := range capitals {
+		if !strings.Contains(s, label) {
+			t.Errorf("expected capital label %q in processed SVG", label)
+		}
+	}
+}
+
 func TestSVGToJPEGWith_DisplayNoneGroupInvisible(t *testing.T) {
 	is := is.New(t)
 	// A display:none group containing a black rect over a white background.

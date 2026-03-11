@@ -9,24 +9,26 @@ import (
 
 // ---- test SVG fixtures ------------------------------------------------------
 
-// unitSVG is a minimal SVG that contains two pre-placed unit glyph elements
-// (matching the format produced by cmd/mkapsvg) for use in overlay tests.
+// unitSVG is a minimal SVG that contains pre-placed unit glyph elements
+// matching the format produced by cmd/mkapsvg after the Story 10b Bug 2 fix:
+// fill is on the <g> element (not the <rect>) so that setAttr on the group
+// propagates the nation colour via SVG inheritance.
 const unitSVG = `<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    viewBox="0 0 100 100">
   <g id="units">
-    <g id="unit-foo-army" transform="translate(50,50)" display="none">
-      <rect x="-12" y="-12" width="24" height="24" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
-      <text x="0" y="5" text-anchor="middle" font-size="14" fill="#000000">A</text>
+    <g id="unit-foo-army" transform="translate(50,50)" display="none" fill="#cccccc">
+      <rect x="-9" y="-9" width="18" height="18" rx="2" stroke="#ffffff" stroke-width="2"/>
+      <text x="0" y="5" text-anchor="middle" font-size="11" fill="#000000">A</text>
     </g>
-    <g id="unit-foo-fleet" transform="translate(50,50)" display="none">
-      <rect x="-15" y="-9" width="30" height="18" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
-      <text x="0" y="5" text-anchor="middle" font-size="10" fill="#000000">F</text>
+    <g id="unit-foo-fleet" transform="translate(50,50)" display="none" fill="#cccccc">
+      <rect x="-14" y="-6" width="28" height="12" rx="3" stroke="#ffffff" stroke-width="2"/>
+      <text x="0" y="5" text-anchor="middle" font-size="8" fill="#000000">F</text>
     </g>
-    <g id="unit-bar-army" transform="translate(20,20)" display="none">
-      <rect x="-12" y="-12" width="24" height="24" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
-      <text x="0" y="5" text-anchor="middle" font-size="14" fill="#000000">A</text>
+    <g id="unit-bar-army" transform="translate(20,20)" display="none" fill="#cccccc">
+      <rect x="-9" y="-9" width="18" height="18" rx="2" stroke="#ffffff" stroke-width="2"/>
+      <text x="0" y="5" text-anchor="middle" font-size="11" fill="#000000">A</text>
     </g>
   </g>
 </svg>`
@@ -154,6 +156,30 @@ func TestOverlay_AllStartingUnits_ActivatesCorrectCount(t *testing.T) {
 	count := strings.Count(s, `display="inline"`)
 	if count != 22 {
 		t.Errorf("expected 22 display=inline elements, got %d", count)
+	}
+}
+
+// TestOverlay_NationColour_FranceArmy verifies that Overlay sets the correct
+// France blue fill (#3399CC) on the <g> element for a French army (Bug 2
+// acceptance criterion: nation colour must appear on unit-par-army).
+func TestOverlay_NationColour_FranceArmy(t *testing.T) {
+	svg := `<svg><g id="unit-par-army" fill="#cccccc" display="none"><rect stroke="#ffffff"/></g></svg>`
+	units := map[string]Unit{
+		"par": {Type: "Army", Nation: "France"},
+	}
+	result, err := Overlay([]byte(svg), units)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(result)
+	if !strings.Contains(s, `id="unit-par-army"`) {
+		t.Fatal("expected unit-par-army in result")
+	}
+	if !strings.Contains(s, `display="inline"`) {
+		t.Error("expected display=inline on activated glyph")
+	}
+	if !strings.Contains(s, `fill="#3399CC"`) {
+		t.Errorf("expected France blue fill=#3399CC, got: %s", s)
 	}
 }
 

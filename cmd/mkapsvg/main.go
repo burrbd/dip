@@ -76,10 +76,70 @@ func runWith(assetFn func(string) ([]byte, error), outPath string) error {
 	return nil
 }
 
+// stripInkscape removes Inkscape/Sodipodi-specific metadata and attributes
+// from an SVG string. The result retains everything the bot render pipeline
+// uses (province shapes, label positions, supply-centre markers, highlights
+// layer, unit placeholder glyphs) but strips the machine-generated cruft that
+// makes the file hard to read or hand-edit.
+//
+// Removed:
+//   - <metadata>…</metadata> blocks (RDF / Dublin Core)
+//   - <sodipodi:namedview> elements
+//   - <defs>…</defs> blocks (Inkscape arrowhead markers and embedded images)
+//   - <style>…</style> blocks (already stripped at render time by stripStyles)
+//   - sodipodi:* attributes on any element
+//   - inkscape:* attributes on any element except inkscape:label
+//   - Namespace declarations for sodipodi, dc, cc, rdf, svg prefixes
+//
+// Preserved:
+//   - xmlns:inkscape (needed for inkscape:label= to be valid XML)
+//   - inkscape:label="…" attributes (used by extractProvinceShape in highlight.go)
+//
+// The function is idempotent: running it twice produces the same output.
+func stripInkscape(svg string) string {
+	// Remove <metadata>…</metadata> blocks.
+	svg = regexp.MustCompile(`(?s)<metadata[^>]*>.*?</metadata\s*>`).ReplaceAllString(svg, "")
+
+	// Remove <sodipodi:namedview> (self-closing or with body).
+	svg = regexp.MustCompile(`(?s)<sodipodi:namedview[^>]*/\s*>`).ReplaceAllString(svg, "")
+	svg = regexp.MustCompile(`(?s)<sodipodi:namedview[^>]*>.*?</sodipodi:namedview\s*>`).ReplaceAllString(svg, "")
+
+	// Remove <defs>…</defs> blocks (contain only Inkscape markers and embedded
+	// images that are not required by the bot's render pipeline).
+	svg = regexp.MustCompile(`(?s)<defs[^>]*>.*?</defs\s*>`).ReplaceAllString(svg, "")
+
+	// Remove <style>…</style> blocks.
+	svg = regexp.MustCompile(`(?s)<style[^>]*>.*?</style\s*>`).ReplaceAllString(svg, "")
+
+	// Remove sodipodi:* attributes on elements.
+	svg = regexp.MustCompile(`\s+sodipodi:[a-zA-Z_-]+="[^"]*"`).ReplaceAllString(svg, "")
+
+	// Remove inkscape:* attributes except inkscape:label. Go's regexp does not
+	// support lookaheads, so we use a two-step approach: protect inkscape:label
+	// by replacing it with a placeholder, strip all remaining inkscape:* attrs,
+	// then restore the placeholder.
+	const labelPlaceholder = "INKSCAPE_LABEL_PLACEHOLDER="
+	svg = strings.ReplaceAll(svg, "inkscape:label=", labelPlaceholder)
+	svg = regexp.MustCompile(`\s+inkscape:[a-zA-Z_-]+="[^"]*"`).ReplaceAllString(svg, "")
+	svg = strings.ReplaceAll(svg, labelPlaceholder, "inkscape:label=")
+
+	// Remove namespace declarations for prefixes that are no longer used.
+	// xmlns:inkscape is intentionally kept so that inkscape:label= remains
+	// valid XML; its presence does not trigger the forbidden-attribute test
+	// because "xmlns:inkscape" does not contain the substring "inkscape:".
+	svg = regexp.MustCompile(`\s+xmlns:(?:sodipodi|dc|cc|rdf|svg)="[^"]*"`).ReplaceAllString(svg, "")
+
+	// Collapse runs of three or more newlines (blank lines left by removed
+	// blocks) to a single blank line.
+	svg = regexp.MustCompile(`\n{3,}`).ReplaceAllString(svg, "\n\n")
+
+	return svg
+}
+
 // generateSVG populates the units layer of the godip SVG with placeholder
 // glyphs and returns the result along with glyph counts.
 func generateSVG(raw []byte) (svg string, fleets, armies int, err error) {
-	svg = string(raw)
+	svg = stripInkscape(string(raw))
 
 	// Find all province centre markers: <path id="<name>Center" d="m cx,cy …"/>
 	centers, err := parseProvinceCenters(svg)
@@ -169,22 +229,28 @@ func parseProvinceCenters(svg string) ([]center, error) {
 }
 
 // armyGlyph generates the SVG markup for a hidden army placeholder at (cx, cy).
+// The fill is placed on the <g> element (not the <rect>) so that Overlay's
+// setAttr call on the group propagates the nation colour to the rect via SVG
+// inheritance.  The text is pinned to black (#000000) with an explicit fill so
+// it does not change colour when the nation fill is applied to the group.
 func armyGlyph(pid string, cx, cy float64) string {
 	return fmt.Sprintf(
-		`<g id="unit-%s-army" transform="translate(%s,%s)" display="none">`+"\n"+
-			`  <rect x="-12" y="-12" width="24" height="24" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>`+"\n"+
-			`  <text x="0" y="5" text-anchor="middle" font-size="14" fill="#000000">A</text>`+"\n"+
+		`<g id="unit-%s-army" transform="translate(%s,%s)" display="none" fill="#cccccc">`+"\n"+
+			`  <rect x="-9" y="-9" width="18" height="18" rx="2" stroke="#ffffff" stroke-width="2"/>`+"\n"+
+			`  <text x="0" y="5" text-anchor="middle" font-size="11" fill="#000000">A</text>`+"\n"+
 			`</g>`+"\n",
 		pid, fmtCoord(cx), fmtCoord(cy),
 	)
 }
 
 // fleetGlyph generates the SVG markup for a hidden fleet placeholder at (cx, cy).
+// Fleet glyphs use a wider, shorter rect (2.3:1 aspect ratio) to read clearly
+// as a ship hull shape and distinguish them from army squares.
 func fleetGlyph(pid string, cx, cy float64) string {
 	return fmt.Sprintf(
-		`<g id="unit-%s-fleet" transform="translate(%s,%s)" display="none">`+"\n"+
-			`  <rect x="-15" y="-9" width="30" height="18" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>`+"\n"+
-			`  <text x="0" y="5" text-anchor="middle" font-size="10" fill="#000000">F</text>`+"\n"+
+		`<g id="unit-%s-fleet" transform="translate(%s,%s)" display="none" fill="#cccccc">`+"\n"+
+			`  <rect x="-14" y="-6" width="28" height="12" rx="3" stroke="#ffffff" stroke-width="2"/>`+"\n"+
+			`  <text x="0" y="5" text-anchor="middle" font-size="8" fill="#000000">F</text>`+"\n"+
 			`</g>`+"\n",
 		pid, fmtCoord(cx), fmtCoord(cy),
 	)

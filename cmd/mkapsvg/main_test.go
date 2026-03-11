@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -302,4 +303,180 @@ func TestFmtCoord_Fractional_TwoDecimalPlaces(t *testing.T) {
 	is := is.New(t)
 	is.Equal(fmtCoord(748.83), "748.83")
 	is.Equal(fmtCoord(12.50), "12.50")
+}
+
+// ---- stripInkscape ----------------------------------------------------------
+
+func TestStripInkscape_RemovesMetadata(t *testing.T) {
+	svg := `<svg><metadata id="m"><rdf:RDF/></metadata><rect id="r"/></svg>`
+	result := stripInkscape(svg)
+	if strings.Contains(result, "<metadata") {
+		t.Error("expected <metadata> block to be removed")
+	}
+	if !strings.Contains(result, `id="r"`) {
+		t.Error("expected non-metadata element to be preserved")
+	}
+}
+
+func TestStripInkscape_RemovesSodipodiNamedview(t *testing.T) {
+	svg := `<svg><sodipodi:namedview id="nv" units="px"/><rect id="r"/></svg>`
+	result := stripInkscape(svg)
+	if strings.Contains(result, "sodipodi:namedview") {
+		t.Error("expected sodipodi:namedview to be removed")
+	}
+	if !strings.Contains(result, `id="r"`) {
+		t.Error("expected other elements to be preserved")
+	}
+}
+
+func TestStripInkscape_RemovesDefs(t *testing.T) {
+	svg := `<svg><defs><marker id="m"/></defs><rect id="r"/></svg>`
+	result := stripInkscape(svg)
+	if strings.Contains(result, "<defs") {
+		t.Error("expected <defs> block to be removed")
+	}
+	if !strings.Contains(result, `id="r"`) {
+		t.Error("expected non-defs element to be preserved")
+	}
+}
+
+func TestStripInkscape_RemovesStyleBlocks(t *testing.T) {
+	svg := `<svg><style>body{font-family:X}</style><rect id="r"/></svg>`
+	result := stripInkscape(svg)
+	if strings.Contains(result, "<style") {
+		t.Error("expected <style> block to be removed")
+	}
+}
+
+func TestStripInkscape_RemovesSodipodiAttributes(t *testing.T) {
+	svg := `<svg><path d="M 0,0" sodipodi:nodetypes="cc" id="p"/></svg>`
+	result := stripInkscape(svg)
+	if strings.Contains(result, "sodipodi:") {
+		t.Errorf("expected sodipodi: attributes to be removed, got: %q", result)
+	}
+	if !strings.Contains(result, `id="p"`) {
+		t.Error("expected path to be preserved")
+	}
+}
+
+func TestStripInkscape_RemovesInkscapeAttributesExceptLabel(t *testing.T) {
+	svg := `<svg><g inkscape:label="foo" inkscape:groupmode="layer" id="g1"/></svg>`
+	result := stripInkscape(svg)
+	if !strings.Contains(result, `inkscape:label="foo"`) {
+		t.Error("expected inkscape:label to be preserved")
+	}
+	if strings.Contains(result, `inkscape:groupmode`) {
+		t.Error("expected inkscape:groupmode to be removed")
+	}
+}
+
+func TestStripInkscape_RemovesNamespaceDeclarations(t *testing.T) {
+	svg := `<svg xmlns:sodipodi="http://s.f.net" xmlns:dc="http://dc" xmlns:inkscape="http://i.o">` +
+		`<rect id="r"/></svg>`
+	result := stripInkscape(svg)
+	if strings.Contains(result, "xmlns:sodipodi") {
+		t.Error("expected xmlns:sodipodi to be removed")
+	}
+	if strings.Contains(result, "xmlns:dc") {
+		t.Error("expected xmlns:dc to be removed")
+	}
+	// xmlns:inkscape must be kept (needed for inkscape:label= XML validity).
+	if !strings.Contains(result, "xmlns:inkscape") {
+		t.Error("expected xmlns:inkscape to be preserved")
+	}
+}
+
+func TestStripInkscape_Idempotent(t *testing.T) {
+	is := is.New(t)
+	raw, err := classical.Asset("svg/map.svg")
+	is.NoErr(err)
+	once := stripInkscape(string(raw))
+	twice := stripInkscape(once)
+	is.Equal(once, twice)
+}
+
+// TestStripInkscape_GeneratedSVGHasNoForbiddenAttributes asserts that the SVG
+// produced by generateSVG contains no sodipodi: or inkscape: text other than
+// inkscape:label= (Story 10a acceptance criterion).
+func TestStripInkscape_GeneratedSVGHasNoForbiddenAttributes(t *testing.T) {
+	is := is.New(t)
+	raw, err := classical.Asset("svg/map.svg")
+	is.NoErr(err)
+
+	svg, _, _, err := generateSVG(raw)
+	is.NoErr(err)
+
+	// No sodipodi: attributes must remain.
+	if strings.Contains(svg, "sodipodi:") {
+		t.Error("expected no sodipodi: in generated SVG")
+	}
+
+	// No inkscape: attributes except inkscape:label= must remain.
+	// Replace all inkscape:label= occurrences and check nothing else remains.
+	svgNoLabel := strings.ReplaceAll(svg, "inkscape:label=", "PLACEHOLDER")
+	if strings.Contains(svgNoLabel, "inkscape:") {
+		t.Error("expected no inkscape: attributes other than inkscape:label= in generated SVG")
+	}
+}
+
+// ---- glyph geometry ---------------------------------------------------------
+
+// TestGlyphGeometry_Dimensions asserts the army and fleet rect sizes required
+// by Story 10b Bug 3: army width < 20, fleet width >= 24, fleet height < army height.
+func TestGlyphGeometry_Dimensions(t *testing.T) {
+	armySVG := armyGlyph("test", 0, 0)
+	fleetSVG := fleetGlyph("test", 0, 0)
+
+	widthRe := regexp.MustCompile(`width="([0-9]+)"`)
+	heightRe := regexp.MustCompile(`height="([0-9]+)"`)
+
+	armyWm := widthRe.FindStringSubmatch(armySVG)
+	fleetWm := widthRe.FindStringSubmatch(fleetSVG)
+	armyHm := heightRe.FindStringSubmatch(armySVG)
+	fleetHm := heightRe.FindStringSubmatch(fleetSVG)
+
+	if armyWm == nil || fleetWm == nil || armyHm == nil || fleetHm == nil {
+		t.Fatal("could not extract rect dimensions from glyph SVG")
+	}
+
+	armyW, _ := strconv.Atoi(armyWm[1])
+	fleetW, _ := strconv.Atoi(fleetWm[1])
+	armyH, _ := strconv.Atoi(armyHm[1])
+	fleetH, _ := strconv.Atoi(fleetHm[1])
+
+	if armyW >= 20 {
+		t.Errorf("army rect width %d must be < 20", armyW)
+	}
+	if fleetW < 24 {
+		t.Errorf("fleet rect width %d must be >= 24", fleetW)
+	}
+	if fleetH >= armyH {
+		t.Errorf("fleet rect height %d must be < army rect height %d", fleetH, armyH)
+	}
+}
+
+// TestGlyphGeometry_FillOnGroup asserts that the fill placeholder is on the
+// <g> element, not on the inner <rect>, so that setAttr can propagate the
+// nation colour via SVG inheritance (Story 10b Bug 2).
+func TestGlyphGeometry_FillOnGroup(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		svg  string
+	}{
+		{"army", armyGlyph("test", 0, 0)},
+		{"fleet", fleetGlyph("test", 0, 0)},
+	} {
+		// The <g> opening tag must carry fill="#cccccc".
+		gRe := regexp.MustCompile(`<g\b[^>]*>`)
+		gTag := gRe.FindString(tc.svg)
+		if !strings.Contains(gTag, `fill="#cccccc"`) {
+			t.Errorf("%s: expected fill=#cccccc on <g> tag, got: %q", tc.name, gTag)
+		}
+		// The <rect> must NOT carry its own fill attribute (so it inherits).
+		rectRe := regexp.MustCompile(`<rect\b[^>]*/?>`)
+		rectTag := rectRe.FindString(tc.svg)
+		if strings.Contains(rectTag, "fill=") {
+			t.Errorf("%s: expected no fill on <rect>, got: %q", tc.name, rectTag)
+		}
+	}
 }

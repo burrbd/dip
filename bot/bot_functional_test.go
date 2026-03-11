@@ -642,7 +642,8 @@ func TestCommand_Map_NoArgs(t *testing.T) {
 }
 
 func TestCommand_Map_WithTerritoryAndRadius(t *testing.T) {
-	// /map vie 1 highlights Vienna and its adjacent provinces (zoomed).
+	// Zoomed /map <territory> <n> is deferred — see Story 10c in PLAN.md.
+	t.Skip("zoomed map with territory/radius deferred: see Story 10c")
 	d, ch := startedGame(t)
 
 	_, err := d.Dispatch(chanCmd("map", "anyone", "game", "vie", "1"))

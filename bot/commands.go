@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -52,12 +51,11 @@ type Dispatcher struct {
 	loader         session.EngineLoader
 	newEng         EngineFactory
 	sessions       map[string]*session.Session
-	graph          dipmap.Graph                                                // optional board graph for /map neighbourhood queries
 	svgFn          func(dipmap.EngineState) ([]byte, error)                   // defaults to dipmap.LoadSVG (raw SVG bytes)
 	overlayFn      func([]byte, map[string]dipmap.Unit) ([]byte, error)       // defaults to dipmap.Overlay (unit glyphs)
 	imgFn          func([]byte) ([]byte, error)                               // defaults to dipmap.SVGToJPEG (full-board JPEG)
-	highlightFn    func([]byte, []string) ([]byte, error)                     // defaults to dipmap.Highlight
-	renderZoomedFn func(dipmap.EngineState, []byte, []string) ([]byte, error) // defaults to dipmap.RenderZoomed
+	highlightFn    func([]byte, []string) ([]byte, error)                     // retained for Story 10c (zoomed /map with territory+radius)
+	renderZoomedFn func(dipmap.EngineState, []byte, []string) ([]byte, error) // retained for Story 10c (zoomed /map with territory+radius)
 }
 
 // New returns a Dispatcher wired to the given dependencies.
@@ -698,29 +696,6 @@ func (d *Dispatcher) handleHistory(cmd Command) (string, error) {
 	return "", fmt.Errorf("bot: no history found for turn %q", turn)
 }
 
-// godipGraph adapts the classical godip board graph to the dipmap.Graph
-// interface used for neighbourhood BFS queries.
-type godipGraph struct{ g godip.Graph }
-
-// Edges returns all province names directly adjacent to territory.
-func (gg godipGraph) Edges(territory string) []string {
-	em := gg.g.Edges(godip.Province(territory), false)
-	result := make([]string, 0, len(em))
-	for p := range em {
-		result = append(result, string(p))
-	}
-	return result
-}
-
-// boardGraph returns the Dispatcher's graph. If none is set it falls back
-// to the classical variant's board graph so that /map radius queries work
-// correctly out of the box.
-func (d *Dispatcher) boardGraph() dipmap.Graph {
-	if d.graph != nil {
-		return d.graph
-	}
-	return godipGraph{g: start.Graph()}
-}
 
 // handleMap processes /map [territory [n]] — renders the board with unit
 // positions and posts it as an image. With territory and n > 0, highlights the
@@ -735,19 +710,6 @@ func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 	sess, ok := d.sessions[cmd.ChannelID]
 	if !ok || sess == nil {
 		return "", fmt.Errorf("bot: no active game found in this channel")
-	}
-
-	territory := ""
-	if len(cmd.Args) >= 1 {
-		territory = cmd.Args[0]
-	}
-	n := 0
-	if len(cmd.Args) >= 2 {
-		parsed, err := strconv.Atoi(cmd.Args[1])
-		if err != nil {
-			return "", fmt.Errorf("bot: invalid radius %q: must be an integer", cmd.Args[1])
-		}
-		n = parsed
 	}
 
 	// Step 1: load SVG.
@@ -767,23 +729,11 @@ func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 		return "", fmt.Errorf("bot: render map: %w", err)
 	}
 
-	// Step 3: rasterise.
-	var img []byte
-	if territory != "" && n > 0 {
-		provinces := dipmap.Neighborhood(d.boardGraph(), territory, n)
-		svg, err = d.highlightFn(svg, provinces)
-		if err != nil {
-			return "", fmt.Errorf("bot: render map: %w", err)
-		}
-		img, err = d.renderZoomedFn(sess.Eng, svg, provinces)
-		if err != nil {
-			return "", fmt.Errorf("bot: render map: %w", err)
-		}
-	} else {
-		img, err = d.imgFn(svg)
-		if err != nil {
-			return "", fmt.Errorf("bot: render map: %w", err)
-		}
+	// Step 3: rasterise full board.
+	// NOTE: zoomed /map <territory> <n> is deferred — see Story 10c in PLAN.md.
+	img, err := d.imgFn(svg)
+	if err != nil {
+		return "", fmt.Errorf("bot: render map: %w", err)
 	}
 
 	if err := d.ch.PostImage(cmd.ChannelID, img); err != nil {

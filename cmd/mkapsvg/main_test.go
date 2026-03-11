@@ -71,14 +71,15 @@ func TestGenerateSVG_AllGlyphsHideByDefault(t *testing.T) {
 	svg, _, _, err := generateSVG(raw)
 	is.NoErr(err)
 
-	// All unit placeholders must start with display="none".
-	reVisible := regexp.MustCompile(`id="unit-[^"]*"[^>]*display="inline"`)
-	if reVisible.MatchString(svg) {
-		t.Error("expected all unit glyphs to have display=none, but found display=inline")
+	// All unit glyphs must use fill="none" stroke="none" to hide them.
+	// tdewolff/canvas ignores display:none, so we use transparent fill/stroke.
+	if !strings.Contains(svg, `fill="none" stroke="none"`) {
+		t.Error("expected unit glyphs to be hidden via fill=none stroke=none")
 	}
-	// At least one glyph with display="none" must be present.
-	if !strings.Contains(svg, `display="none"`) {
-		t.Error("expected at least one display=none in generated SVG")
+	// No glyph should have display="none" (canvas ignores it).
+	reDisplayNone := regexp.MustCompile(`id="unit-[^"]*"[^>]*display="none"`)
+	if reDisplayNone.MatchString(svg) {
+		t.Error("unexpected display=none on unit glyph; use fill=none stroke=none instead")
 	}
 }
 
@@ -455,9 +456,11 @@ func TestGlyphGeometry_Dimensions(t *testing.T) {
 	}
 }
 
-// TestGlyphGeometry_FillOnGroup asserts that the fill placeholder is on the
-// <g> element, not on the inner <rect>, so that setAttr can propagate the
-// nation colour via SVG inheritance (Story 10b Bug 2).
+// TestGlyphGeometry_FillOnGroup asserts that the <g> element carries
+// fill="none" stroke="none" (the hidden state) and that the inner <rect>
+// carries no explicit fill or stroke (so it inherits from the group). When
+// Overlay activates a glyph it sets fill=nationColor stroke=#ffffff on the
+// group, both of which cascade into the rect via SVG inheritance.
 func TestGlyphGeometry_FillOnGroup(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -466,17 +469,125 @@ func TestGlyphGeometry_FillOnGroup(t *testing.T) {
 		{"army", armyGlyph("test", 0, 0)},
 		{"fleet", fleetGlyph("test", 0, 0)},
 	} {
-		// The <g> opening tag must carry fill="#cccccc".
+		// The <g> opening tag must carry fill="none" stroke="none".
 		gRe := regexp.MustCompile(`<g\b[^>]*>`)
 		gTag := gRe.FindString(tc.svg)
-		if !strings.Contains(gTag, `fill="#cccccc"`) {
-			t.Errorf("%s: expected fill=#cccccc on <g> tag, got: %q", tc.name, gTag)
+		if !strings.Contains(gTag, `fill="none"`) {
+			t.Errorf("%s: expected fill=none on <g> tag, got: %q", tc.name, gTag)
 		}
-		// The <rect> must NOT carry its own fill attribute (so it inherits).
+		if !strings.Contains(gTag, `stroke="none"`) {
+			t.Errorf("%s: expected stroke=none on <g> tag, got: %q", tc.name, gTag)
+		}
+		// The <rect> must NOT carry its own fill or stroke attributes (so it inherits).
 		rectRe := regexp.MustCompile(`<rect\b[^>]*/?>`)
 		rectTag := rectRe.FindString(tc.svg)
 		if strings.Contains(rectTag, "fill=") {
 			t.Errorf("%s: expected no fill on <rect>, got: %q", tc.name, rectTag)
 		}
+		if strings.Contains(rectTag, `stroke="`) {
+			t.Errorf("%s: expected no stroke color on <rect>, got: %q", tc.name, rectTag)
+		}
+	}
+}
+
+// ---- stripGroupByID ---------------------------------------------------------
+
+func TestStripGroupByID_RemovesTargetGroup(t *testing.T) {
+	svg := `<svg><g id="provinces"><path id="p"/></g><rect id="r"/></svg>`
+	result := stripGroupByID(svg, "provinces")
+	if strings.Contains(result, `id="provinces"`) {
+		t.Error("expected provinces group to be removed")
+	}
+	if !strings.Contains(result, `id="r"`) {
+		t.Error("expected sibling element to be preserved")
+	}
+}
+
+func TestStripGroupByID_GroupNotFound_ReturnsUnchanged(t *testing.T) {
+	svg := `<svg><g id="other"><path/></g></svg>`
+	result := stripGroupByID(svg, "provinces")
+	if result != svg {
+		t.Error("expected SVG unchanged when group not found")
+	}
+}
+
+func TestStripGroupByID_NestedGroups_RemovesCorrectly(t *testing.T) {
+	svg := `<svg><g id="provinces"><g id="inner"><path/></g></g><g id="keep"/></svg>`
+	result := stripGroupByID(svg, "provinces")
+	if strings.Contains(result, `id="provinces"`) || strings.Contains(result, `id="inner"`) {
+		t.Error("expected provinces group and all nested content to be removed")
+	}
+	if !strings.Contains(result, `id="keep"`) {
+		t.Error("expected sibling group to be preserved")
+	}
+}
+
+func TestStripGroupByID_UnterminatedGroup_ReturnsUnchanged(t *testing.T) {
+	// Group is opened but never closed (no </g>). The fallback default branch
+	// in the depth-tracking loop must return the original svg.
+	svg := `<svg><g id="provinces"><path id="p"/>`
+	result := stripGroupByID(svg, "provinces")
+	if result != svg {
+		t.Error("expected SVG unchanged when group has no closing tag")
+	}
+}
+
+func TestGenerateSVG_StripsHiddenGroups(t *testing.T) {
+	is := is.New(t)
+	raw, err := classical.Asset("svg/map.svg")
+	is.NoErr(err)
+
+	svg, _, _, err := generateSVG(raw)
+	is.NoErr(err)
+
+	for _, id := range []string{"provinces", "supply-centers", "province-centers"} {
+		if strings.Contains(svg, `id="`+id+`"`) {
+			t.Errorf("expected group id=%q to be stripped from generated SVG", id)
+		}
+	}
+}
+
+// ---- fixImpassableFill ------------------------------------------------------
+
+func TestFixImpassableFill_ReplacesImpassableStripes(t *testing.T) {
+	svg := `<path style="fill:url(#impassableStripes);stroke:#000"/>`
+	result := fixImpassableFill(svg)
+	if strings.Contains(result, "impassableStripes") {
+		t.Error("expected impassableStripes reference to be replaced")
+	}
+	if !strings.Contains(result, "fill:#d4d0ad") {
+		t.Error("expected fill to be replaced with background beige #d4d0ad")
+	}
+}
+
+func TestFixImpassableFill_ReplacesPattern1827(t *testing.T) {
+	svg := `<rect style="fill:url(#pattern1827);fill-opacity:0.05"/>`
+	result := fixImpassableFill(svg)
+	if strings.Contains(result, "pattern1827") {
+		t.Error("expected pattern1827 reference to be replaced")
+	}
+	if !strings.Contains(result, "fill:none") {
+		t.Error("expected fill:url(#pattern1827) to become fill:none")
+	}
+}
+
+func TestFixImpassableFill_NoMatch_ReturnsUnchanged(t *testing.T) {
+	svg := `<rect style="fill:#d4d0ad"/>`
+	result := fixImpassableFill(svg)
+	if result != svg {
+		t.Error("expected SVG unchanged when no url() fill references present")
+	}
+}
+
+func TestGenerateSVG_NoImpassableStripes(t *testing.T) {
+	is := is.New(t)
+	raw, err := classical.Asset("svg/map.svg")
+	is.NoErr(err)
+
+	svg, _, _, err := generateSVG(raw)
+	is.NoErr(err)
+
+	if strings.Contains(svg, "impassableStripes") {
+		t.Error("expected impassableStripes url() reference to be replaced in generated SVG")
 	}
 }

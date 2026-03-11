@@ -36,8 +36,11 @@ func nationColour(nation string) string {
 }
 
 // Overlay activates the pre-placed unit placeholder glyphs in the SVG for
-// each province in units. It sets display="inline" and the nation fill colour
-// on the matching <g id="unit-<province>-<type>"> element.
+// each province in units. It sets fill to the nation colour and stroke to
+// "#ffffff" on the matching <g id="unit-<province>-<type>"> element. Both
+// attributes cascade to the child <rect> via SVG inheritance, making the
+// coloured unit box visible. Hidden glyphs carry fill="none" stroke="none"
+// so they are transparent; tdewolff/canvas ignores display:none.
 //
 // Province names in units should use godip's lowercase convention (e.g. "vie",
 // "stp/nc"). The "/" separator in coastal names is normalised to "-" to form
@@ -53,15 +56,17 @@ func Overlay(svg []byte, units map[string]Unit) ([]byte, error) {
 	return []byte(s), nil
 }
 
-// injectUnits activates pre-placed unit glyphs by setting display="inline"
-// and the nation fill colour on each matching element.
+// injectUnits activates pre-placed unit glyphs by setting fill to the nation
+// colour and stroke to "#ffffff" on each matching element. Both cascade into
+// the child <rect> via SVG inheritance (the rect carries no explicit fill or
+// stroke, so it inherits from the <g> parent).
 func injectUnits(svg string, units map[string]Unit) string {
 	for province, u := range units {
 		pid := strings.ReplaceAll(province, "/", "-")
 		id := fmt.Sprintf("unit-%s-%s", pid, strings.ToLower(u.Type))
 		colour := nationColour(u.Nation)
-		svg = setAttr(svg, id, "display", "inline")
 		svg = setAttr(svg, id, "fill", colour)
+		svg = setAttr(svg, id, "stroke", "#ffffff")
 	}
 	return svg
 }

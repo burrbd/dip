@@ -10,25 +10,24 @@ import (
 // ---- test SVG fixtures ------------------------------------------------------
 
 // unitSVG is a minimal SVG that contains pre-placed unit glyph elements
-// matching the format produced by cmd/mkapsvg after the Story 10b Bug 2 fix:
-// fill is on the <g> element (not the <rect>) so that setAttr on the group
-// propagates the nation colour via SVG inheritance.
+// matching the format produced by cmd/mkapsvg. Glyphs are hidden by setting
+// fill="none" stroke="none" on the <g> element; tdewolff/canvas ignores
+// display:none so we use transparent fill/stroke instead. Overlay activates
+// a glyph by setting fill=nationColor stroke=#ffffff on the group, both of
+// which cascade into the <rect> via SVG inheritance.
 const unitSVG = `<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    viewBox="0 0 100 100">
   <g id="units">
-    <g id="unit-foo-army" transform="translate(50,50)" display="none" fill="#cccccc">
-      <rect x="-9" y="-9" width="18" height="18" rx="2" stroke="#ffffff" stroke-width="2"/>
-      <text x="0" y="5" text-anchor="middle" font-size="11" fill="#000000">A</text>
+    <g id="unit-foo-army" transform="translate(50,50)" fill="none" stroke="none">
+      <rect x="-9" y="-9" width="18" height="18" rx="2" stroke-width="2"/>
     </g>
-    <g id="unit-foo-fleet" transform="translate(50,50)" display="none" fill="#cccccc">
-      <rect x="-14" y="-6" width="28" height="12" rx="3" stroke="#ffffff" stroke-width="2"/>
-      <text x="0" y="5" text-anchor="middle" font-size="8" fill="#000000">F</text>
+    <g id="unit-foo-fleet" transform="translate(50,50)" fill="none" stroke="none">
+      <rect x="-14" y="-6" width="28" height="12" rx="3" stroke-width="2"/>
     </g>
-    <g id="unit-bar-army" transform="translate(20,20)" display="none" fill="#cccccc">
-      <rect x="-9" y="-9" width="18" height="18" rx="2" stroke="#ffffff" stroke-width="2"/>
-      <text x="0" y="5" text-anchor="middle" font-size="11" fill="#000000">A</text>
+    <g id="unit-bar-army" transform="translate(20,20)" fill="none" stroke="none">
+      <rect x="-9" y="-9" width="18" height="18" rx="2" stroke-width="2"/>
     </g>
   </g>
 </svg>`
@@ -51,12 +50,12 @@ func TestOverlay_ActivatesArmyGlyph(t *testing.T) {
 	is.NoErr(err)
 	s := string(result)
 
-	// The army glyph for "foo" must now have display="inline".
+	// The army glyph for "foo" must now have stroke="#ffffff" (activated).
 	if !strings.Contains(s, `id="unit-foo-army"`) {
 		t.Fatal("expected unit-foo-army glyph in SVG")
 	}
-	if !strings.Contains(s, `display="inline"`) {
-		t.Error("expected display=inline on activated glyph")
+	if !strings.Contains(s, `stroke="#ffffff"`) {
+		t.Error("expected stroke=#ffffff on activated glyph")
 	}
 	// Nation colour must be set.
 	if !strings.Contains(s, `fill="#CC0000"`) {
@@ -75,8 +74,8 @@ func TestOverlay_ActivatesFleetGlyph(t *testing.T) {
 	if !strings.Contains(s, `id="unit-foo-fleet"`) {
 		t.Fatal("expected unit-foo-fleet glyph in SVG")
 	}
-	if !strings.Contains(s, `display="inline"`) {
-		t.Error("expected display=inline on activated fleet glyph")
+	if !strings.Contains(s, `stroke="#ffffff"`) {
+		t.Error("expected stroke=#ffffff on activated fleet glyph")
 	}
 	if !strings.Contains(s, `fill="#003399"`) {
 		t.Error("expected England's colour #003399")
@@ -92,15 +91,15 @@ func TestOverlay_UnknownProvince_LogsAndContinues(t *testing.T) {
 	}
 	result, err := Overlay([]byte(unitSVG), units)
 	is.NoErr(err)
-	// SVG must be otherwise unchanged — no display=inline added.
-	if strings.Contains(string(result), `display="inline"`) {
-		t.Error("expected no display=inline when province not found")
+	// SVG must be otherwise unchanged — no stroke=#ffffff added.
+	if strings.Contains(string(result), `stroke="#ffffff"`) {
+		t.Error("expected no stroke=#ffffff when province not found")
 	}
 }
 
 func TestOverlay_CoastalVariant_NormalisesSlash(t *testing.T) {
 	// Province "stp/nc" should map to id "unit-stp-nc-fleet".
-	svg := `<svg><g id="unit-stp-nc-fleet" display="none"/></svg>`
+	svg := `<svg><g id="unit-stp-nc-fleet" fill="none" stroke="none"/></svg>`
 	units := map[string]Unit{
 		"stp/nc": {Type: "Fleet", Nation: "Russia"},
 	}
@@ -108,8 +107,8 @@ func TestOverlay_CoastalVariant_NormalisesSlash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(result), `display="inline"`) {
-		t.Error("expected display=inline after activating stp/nc fleet")
+	if !strings.Contains(string(result), `stroke="#ffffff"`) {
+		t.Error("expected stroke=#ffffff after activating stp/nc fleet")
 	}
 }
 
@@ -145,7 +144,7 @@ func TestOverlay_AllStartingUnits_ActivatesCorrectCount(t *testing.T) {
 	for prov, u := range startingUnits {
 		pid := strings.ReplaceAll(prov, "/", "-")
 		t2 := strings.ToLower(u.Type)
-		glyphs.WriteString(`<g id="unit-` + pid + `-` + t2 + `" display="none"/>` + "\n")
+		glyphs.WriteString(`<g id="unit-` + pid + `-` + t2 + `" fill="none" stroke="none"/>` + "\n")
 	}
 	svg := `<svg xmlns="http://www.w3.org/2000/svg">` + glyphs.String() + `</svg>`
 
@@ -153,9 +152,9 @@ func TestOverlay_AllStartingUnits_ActivatesCorrectCount(t *testing.T) {
 	is.NoErr(err)
 
 	s := string(result)
-	count := strings.Count(s, `display="inline"`)
+	count := strings.Count(s, `stroke="#ffffff"`)
 	if count != 22 {
-		t.Errorf("expected 22 display=inline elements, got %d", count)
+		t.Errorf("expected 22 stroke=#ffffff elements (activated glyphs), got %d", count)
 	}
 }
 
@@ -163,7 +162,7 @@ func TestOverlay_AllStartingUnits_ActivatesCorrectCount(t *testing.T) {
 // France blue fill (#3399CC) on the <g> element for a French army (Bug 2
 // acceptance criterion: nation colour must appear on unit-par-army).
 func TestOverlay_NationColour_FranceArmy(t *testing.T) {
-	svg := `<svg><g id="unit-par-army" fill="#cccccc" display="none"><rect stroke="#ffffff"/></g></svg>`
+	svg := `<svg><g id="unit-par-army" fill="none" stroke="none"><rect stroke-width="2"/></g></svg>`
 	units := map[string]Unit{
 		"par": {Type: "Army", Nation: "France"},
 	}
@@ -175,8 +174,8 @@ func TestOverlay_NationColour_FranceArmy(t *testing.T) {
 	if !strings.Contains(s, `id="unit-par-army"`) {
 		t.Fatal("expected unit-par-army in result")
 	}
-	if !strings.Contains(s, `display="inline"`) {
-		t.Error("expected display=inline on activated glyph")
+	if !strings.Contains(s, `stroke="#ffffff"`) {
+		t.Error("expected stroke=#ffffff on activated glyph")
 	}
 	if !strings.Contains(s, `fill="#3399CC"`) {
 		t.Errorf("expected France blue fill=#3399CC, got: %s", s)

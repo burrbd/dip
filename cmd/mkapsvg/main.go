@@ -136,13 +136,13 @@ func stripInkscape(svg string) string {
 	return svg
 }
 
-// stripProvincesGroup removes the <g id="provinces"> layer from the SVG.
-// That layer fills every province shape with solid black (#000000), obscuring
-// all other layers when rendered by tdewolff/canvas. Province borders are
-// already rendered by the foreground group; the provinces layer is not needed
-// by the bot's render pipeline.
-func stripProvincesGroup(svg string) string {
-	re := regexp.MustCompile(`(?s)<g\b[^>]*\bid="provinces"[^>]*>`)
+// stripGroupByID removes the <g id="…"> group with the given id from the SVG,
+// including all of its nested content. It is used to excise layers that either
+// produce incorrect visual output (black fills due to missing defs) or render
+// elements that should be hidden but are ignored by tdewolff/canvas (which does
+// not implement the SVG display property).
+func stripGroupByID(svg, id string) string {
+	re := regexp.MustCompile(`(?s)<g\b[^>]*\bid="` + regexp.QuoteMeta(id) + `"[^>]*>`)
 	loc := re.FindStringIndex(svg)
 	if loc == nil {
 		return svg
@@ -169,6 +169,21 @@ func stripProvincesGroup(svg string) string {
 	return svg[:start] + svg[pos:]
 }
 
+// fixImpassableFill replaces fill:url(#impassableStripes) references with the
+// map background colour. The impassableStripes SVG pattern lives in <defs>
+// which stripInkscape removes; tdewolff/canvas falls back to solid Black for
+// unresolved url() fills, turning Ireland, Iceland, Cyprus and Switzerland
+// into black blobs. Using the background beige makes them blend with the sea.
+//
+// Similarly, fill:url(#pattern1827) is the noise texture overlay; without its
+// defs entry canvas would render a near-opaque black veil over the whole map,
+// so it is replaced with fill:none.
+func fixImpassableFill(svg string) string {
+	svg = strings.ReplaceAll(svg, "fill:url(#impassableStripes)", "fill:#d4d0ad")
+	svg = strings.ReplaceAll(svg, "fill:url(#pattern1827)", "fill:none")
+	return svg
+}
+
 // fixSVGDimensions replaces percentage width/height on the SVG root element
 // with the numeric values from its viewBox. tdewolff/canvas resolves a
 // percentage width/height against a 1 mm parent, producing a 1×1 px output.
@@ -189,10 +204,11 @@ func fixSVGDimensions(svg string) string {
 // glyphs and returns the result along with glyph counts.
 func generateSVG(raw []byte) (svg string, fleets, armies int, err error) {
 	svg = stripInkscape(string(raw))
-	svg = stripProvincesGroup(svg)
 	svg = fixSVGDimensions(svg)
+	svg = fixImpassableFill(svg)
 
-	// Find all province centre markers: <path id="<name>Center" d="m cx,cy …"/>
+	// Parse province centre coordinates before stripping the province-centers
+	// group — the *Center path elements live inside that group.
 	centers, err := parseProvinceCenters(svg)
 	if err != nil {
 		return "", 0, 0, err
@@ -222,6 +238,14 @@ func generateSVG(raw []byte) (svg string, fleets, armies int, err error) {
 		reUnits = regexp.MustCompile(`<g[^>]*\bid="units"[^>]*/\s*>`)
 	}
 	svg = reUnits.ReplaceAllString(svg, replacement)
+
+	// Strip groups that either produce black fills (provinces, missing defs) or
+	// render elements that should be invisible but are not, because
+	// tdewolff/canvas does not implement the SVG display property.
+	// province-centers is stripped here (after coordinate extraction above).
+	svg = stripGroupByID(svg, "provinces")
+	svg = stripGroupByID(svg, "supply-centers")
+	svg = stripGroupByID(svg, "province-centers")
 
 	return svg, fleets, armies, nil
 }
@@ -280,15 +304,15 @@ func parseProvinceCenters(svg string) ([]center, error) {
 }
 
 // armyGlyph generates the SVG markup for a hidden army placeholder at (cx, cy).
-// The fill is placed on the <g> element (not the <rect>) so that Overlay's
-// setAttr call on the group propagates the nation colour to the rect via SVG
-// inheritance.  The text is pinned to black (#000000) with an explicit fill so
-// it does not change colour when the nation fill is applied to the group.
+// The glyph is hidden by setting fill="none" stroke="none" on the <g> element
+// so that the <rect> inherits transparent fill and stroke. tdewolff/canvas does
+// not implement the SVG display property, so display="none" cannot be used.
+// Overlay activates the glyph by setting fill to the nation colour and stroke
+// to "#ffffff" on the group, which both cascade into the <rect> via inheritance.
 func armyGlyph(pid string, cx, cy float64) string {
 	return fmt.Sprintf(
-		`<g id="unit-%s-army" transform="translate(%s,%s)" display="none" fill="#cccccc">`+"\n"+
-			`  <rect x="-9" y="-9" width="18" height="18" rx="2" stroke="#ffffff" stroke-width="2"/>`+"\n"+
-			`  <text x="0" y="5" text-anchor="middle" font-size="11" fill="#000000">A</text>`+"\n"+
+		`<g id="unit-%s-army" transform="translate(%s,%s)" fill="none" stroke="none">`+"\n"+
+			`  <rect x="-9" y="-9" width="18" height="18" rx="2" stroke-width="2"/>`+"\n"+
 			`</g>`+"\n",
 		pid, fmtCoord(cx), fmtCoord(cy),
 	)
@@ -296,12 +320,12 @@ func armyGlyph(pid string, cx, cy float64) string {
 
 // fleetGlyph generates the SVG markup for a hidden fleet placeholder at (cx, cy).
 // Fleet glyphs use a wider, shorter rect (2.3:1 aspect ratio) to read clearly
-// as a ship hull shape and distinguish them from army squares.
+// as a ship hull shape and distinguish them from army squares. Hiding and
+// activation follow the same fill/stroke inheritance mechanism as armyGlyph.
 func fleetGlyph(pid string, cx, cy float64) string {
 	return fmt.Sprintf(
-		`<g id="unit-%s-fleet" transform="translate(%s,%s)" display="none" fill="#cccccc">`+"\n"+
-			`  <rect x="-14" y="-6" width="28" height="12" rx="3" stroke="#ffffff" stroke-width="2"/>`+"\n"+
-			`  <text x="0" y="5" text-anchor="middle" font-size="8" fill="#000000">F</text>`+"\n"+
+		`<g id="unit-%s-fleet" transform="translate(%s,%s)" fill="none" stroke="none">`+"\n"+
+			`  <rect x="-14" y="-6" width="28" height="12" rx="3" stroke-width="2"/>`+"\n"+
 			`</g>`+"\n",
 		pid, fmtCoord(cx), fmtCoord(cy),
 	)

@@ -5,6 +5,7 @@ package dipmap
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"image"
 	"image/color"
@@ -18,8 +19,11 @@ import (
 
 	"github.com/srwiley/oksvg"
 	"github.com/srwiley/rasterx"
-	"github.com/zond/godip/variants/classical"
 )
+
+//go:embed assets/map.svg
+var embeddedMapSVG []byte
+
 
 // EngineState is the minimal engine interface needed for map rendering.
 // engine.Engine satisfies this interface.
@@ -49,9 +53,17 @@ func stripStyles(svg []byte) []byte {
 	return regexp.MustCompile(`(?s)<style[^>]*>.*?</style\s*>`).ReplaceAll(svg, nil)
 }
 
-// Render converts godip's classical SVG map to a JPEG byte slice.
+// Render converts the classical SVG map to a JPEG byte slice.
+// It uses the embedded dipmap/assets/map.svg which contains pre-placed unit
+// placeholder glyphs for all 81 province centres.
 func Render(state EngineState) ([]byte, error) {
-	return renderWith(state, func() ([]byte, error) { return loadClassicalSVGWith(classical.Asset) })
+	return renderWith(state, loadEmbeddedSVG)
+}
+
+// loadEmbeddedSVG returns the embedded dipmap/assets/map.svg with <style>
+// blocks stripped so that oksvg can parse it.
+func loadEmbeddedSVG() ([]byte, error) {
+	return stripStyles(embeddedMapSVG), nil
 }
 
 // renderWith is the testable core of Render; svgLoader is injected in tests.
@@ -69,10 +81,10 @@ func renderWithLoader(state EngineState, assetFn func(string) ([]byte, error)) (
 	return renderWith(state, func() ([]byte, error) { return loadClassicalSVGWith(assetFn) })
 }
 
-// LoadSVG returns the classical SVG map bytes. It is used as the svgFn
-// in bot.Dispatcher for the territory-zoom rendering path.
+// LoadSVG returns the SVG map bytes from the embedded asset. It is used as the
+// svgFn in bot.Dispatcher for the territory-zoom rendering path.
 func LoadSVG(_ EngineState) ([]byte, error) {
-	return loadClassicalSVGWith(classical.Asset)
+	return loadEmbeddedSVG()
 }
 
 // loadSVGWith is the testable core of LoadSVG with an injectable asset loader.
@@ -92,13 +104,48 @@ func svgToJPEG(svg []byte) ([]byte, error) {
 // and highlight layers already applied) to a JPEG byte slice.
 func SVGToJPEG(svg []byte) ([]byte, error) { return svgToJPEG(svg) }
 
-// prepareForRender converts style="display:none" groups to style="opacity:0"
-// because oksvg does not support the CSS display property. Without this
-// substitution, layers that are intended to be invisible (e.g. the province
-// hit-area layer) are rendered as fully-opaque black shapes on top of the map.
+// naturalWidth is the viewBox width of the godip classical SVG map (≈1524).
+// It is used as the base canvas width for font-size scaling calculations.
+const naturalWidth = 1524.0
+
+// prepareForRender makes an SVG ready for oksvg by hiding elements that should
+// not be visible. oksvg does not support the CSS display property, so all
+// occurrences — whether in inline style= attributes or as a standalone
+// display= attribute — are converted to style="opacity:0".
 func prepareForRender(svg []byte) []byte {
-	re := regexp.MustCompile(`style="[^"]*\bdisplay\s*:\s*none\b[^"]*"`)
-	return re.ReplaceAll(svg, []byte(`style="opacity:0"`))
+	// Inline style: style="...display:none..." → style="opacity:0"
+	re1 := regexp.MustCompile(`style="[^"]*\bdisplay\s*:\s*none\b[^"]*"`)
+	svg = re1.ReplaceAll(svg, []byte(`style="opacity:0"`))
+	// Standalone attribute: display="none" → style="opacity:0"
+	re2 := regexp.MustCompile(`\bdisplay="none"`)
+	svg = re2.ReplaceAll(svg, []byte(`style="opacity:0"`))
+	return svg
+}
+
+// rewriteTextStyles rewrites the inline style= attribute of every <text>
+// element so that oksvg can render them. The godip SVG uses LibreBaskerville-Bold
+// which oksvg cannot resolve, silently dropping all text elements. This
+// function replaces the style with a minimal form: font-size and fill only.
+// Font size is scaled by (canvasWidth / naturalWidth) so that labels stay
+// legible across both full-board and zoomed renders.
+func rewriteTextStyles(svg []byte, canvasWidth float64) []byte {
+	scale := 1.0
+	if canvasWidth > 0 {
+		scale = canvasWidth / naturalWidth
+	}
+	size := math.Round(16.0 * scale)
+	if size < 1 {
+		size = 1
+	}
+	newStyle := fmt.Sprintf(`style="font-size:%.0fpx;fill:#000000"`, size)
+	styleRe := regexp.MustCompile(`\bstyle="[^"]*"`)
+	textRe := regexp.MustCompile(`<text\b[^>]*>`)
+	return textRe.ReplaceAllFunc(svg, func(tag []byte) []byte {
+		if styleRe.Match(tag) {
+			return styleRe.ReplaceAll(tag, []byte(newStyle))
+		}
+		return tag
+	})
 }
 
 // svgToJPEGWith is the testable core of svgToJPEG with an injectable encoder.
@@ -107,6 +154,8 @@ func svgToJPEGWith(svg []byte, encoderFn func(io.Writer, image.Image) error) ([]
 	svgStr := string(svg)
 	// Prefer viewBox for natural dimensions (godip SVGs use width="100%").
 	_, _, vw, vh := parseSVGViewBox(svgStr)
+	// Rewrite <text> element styles so oksvg can render province labels.
+	svg = rewriteTextStyles(svg, vw)
 	w, h := int(vw), int(vh)
 	if w <= 0 || h <= 0 {
 		w, h = parseSVGDimensions(svg)
@@ -213,6 +262,7 @@ func renderZoomedWith(_ EngineState, svg []byte, provinces []string, encoderFn f
 	}
 
 	renderSVG := prepareForRender(svg)
+	renderSVG = rewriteTextStyles(renderSVG, float64(outputWidth))
 
 	icon, err := oksvg.ReadIconStream(bytes.NewReader(renderSVG))
 	if err != nil {

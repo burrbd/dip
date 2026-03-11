@@ -22,8 +22,11 @@ Never mark a story done if any test is failing or any criterion is unmet.
 
 ## Stories
 
-- [ ] Story 9g — Map Rendering Polish (zoom radius, labels, unit geometry, scale, z-order)
-- [ ] Story 9h — Pre-populate SVG with unit placeholder glyphs
+- [x] Story 9g — Map Rendering Polish (zoom radius, labels, unit geometry, scale, z-order)
+- [x] Story 9h — Pre-populate SVG with unit placeholder glyphs
+- [ ] Story 10a — SVG Simplification: Strip Inkscape Metadata
+- [ ] Story 10b — Map Rendering Fixes: Labels, Unit Colours, and Glyph Geometry
+- [ ] Story 10c — Zoomed /map with Territory and Radius (deferred)
 - [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -285,6 +288,232 @@ normalisation (`/` → `-`) must happen inside `injectUnits`, not in the caller.
 - `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `cmd/mkapsvg/`.
 - `go test -v -tags functional ./bot/` passes.
 - No centroid-computation or glyph-injection code remains in `dipmap/`.
+
+---
+
+### Story 10a — SVG Simplification: Strip Inkscape Metadata
+
+**Goal:** Clean up `dipmap/assets/map.svg` to a minimal, hand-editable SVG by removing all
+Inkscape/Sodipodi-specific attributes and RDF metadata while preserving everything the bot
+actually uses at runtime: province shapes (`<g id="provinces">`), label positions
+(`<g id="names">`), supply-centre markers (`<g id="province-centers">`), highlights layer
+(`<g id="highlights"/>`), and unit placeholder glyphs (`<g id="units">`).
+
+After this story the SVG can be opened in any text editor or Inkscape and hand-tweaked without
+wading through thousands of lines of machine-generated metadata.
+
+**Why now:** `dipmap/assets/map.svg` is ~2.2 MB because the godip source SVG was copied
+verbatim. The file is full of `sodipodi:*` and `inkscape:*` attributes on every element, plus
+`<metadata>` / RDF blocks and `<defs>` with Inkscape-specific markers. None of this is
+consumed by the bot's render pipeline (`oksvg` ignores unknown namespaced attributes). Removing
+it shrinks the file dramatically, speeds up SVG parsing, and makes hand-editing practical.
+
+**Files:** `dipmap/assets/map.svg`, `cmd/mkapsvg/main.go`
+
+---
+
+#### What to strip
+
+| Category | Example | Safe to remove? |
+|---|---|---|
+| RDF / Dublin Core metadata | `<metadata>…</metadata>` | Yes |
+| Inkscape `<sodipodi:namedview>` | `<sodipodi:namedview …/>` | Yes |
+| `inkscape:*` attributes on elements | `inkscape:connector-curvature="0"` | **Except** `inkscape:label` — see below |
+| `sodipodi:*` attributes on elements | `sodipodi:nodetypes="…"` | Yes |
+| `<defs>` containing only Inkscape arrowhead markers | `<defs><marker id="…">…</marker></defs>` | Yes |
+| Namespace declarations for stripped prefixes | `xmlns:inkscape="…"` | Yes |
+| `<style>` blocks | Already stripped at render time by `stripStyles()` | Yes — remove from source too |
+
+**Keep `inkscape:label`:** The `extractProvinceShape` helper in `dipmap/highlight.go` locates
+province polygons using `inkscape:label="<province>"` (e.g. `inkscape:label="vie"`). This
+attribute is needed for the zoomed-map feature (Story 10c). Do not remove it.
+
+#### How to implement
+
+Two options — choose one:
+
+**Option A — One-off script:** Write a small Go program in `cmd/stripsvg/` (or add a
+`-strip` flag to `cmd/mkapsvg/`) that reads `dipmap/assets/map.svg`, applies regex / XML
+cleanup, and overwrites the file. Commit the cleaned file.
+
+**Option B — Pre-process in mkapsvg:** Add the strip pass to the existing `cmd/mkapsvg/main.go`
+so that re-running the generator always produces a clean SVG. This is preferred because the tool
+and the asset stay in sync.
+
+The cleanup pass must be idempotent (running it twice produces the same output).
+
+#### Acceptance criteria
+
+- `dipmap/assets/map.svg` contains no `<metadata>` block, no `<sodipodi:namedview>`,
+  no `sodipodi:*` or `inkscape:*` attributes (other than `inkscape:label`), no `<style>` blocks.
+- File size is < 600 KB (from ~2.2 MB).
+- `go test -v -cover -race ./...` still passes at 100%.
+- `go test -v -tags functional ./bot/` still passes (the render pipeline is unaffected).
+- A unit test in `cmd/mkapsvg/main_test.go` (or `cmd/stripsvg/main_test.go`) asserts that the
+  output SVG contains no `sodipodi:` or `inkscape:` text (other than `inkscape:label=`).
+
+---
+
+### Story 10b — Map Rendering Fixes: Labels, Unit Colours, and Glyph Geometry
+
+**Goal:** Fix three visible defects in the basic `/map` (no-argument) output:
+
+1. **Province name labels are not visible** — the map renders with no text.
+2. **All unit glyphs appear the same grey** — nation colours are not applied.
+3. **Unit glyphs are too large; fleet glyphs are not visually distinct enough.**
+
+**Files:** `dipmap/render.go`, `dipmap/overlay.go`, `cmd/mkapsvg/main.go`,
+`dipmap/assets/map.svg`, `dipmap/render_test.go`, `dipmap/overlay_test.go`
+
+---
+
+#### Bug 1 — Province name labels not visible
+
+**Root cause:** The `names` layer in `map.svg` contains `<text>` elements whose inline
+`style=` attributes reference the font `LibreBaskerville-Bold`. `oksvg` cannot resolve this
+font and silently drops every text element that references it.
+
+`render.go` has a `rewriteTextStyles()` helper that is supposed to strip problematic font
+properties. Verify whether it is being called in the render pipeline and whether it actually
+strips `font-family`. If not, fix it. The rewritten style must reduce to a form oksvg can
+handle, e.g.:
+
+```
+style="font-size:16px;fill:#000000"
+```
+
+Properties to strip: `font-family`, `font-variant-*`, `-inkscape-font-specification`,
+`font-variant-ligatures`, `font-variant-caps`, `font-variant-numeric`, `font-variant-east-asian`.
+
+Properties to keep: `font-size`, `fill`, `text-anchor`, `writing-mode`.
+
+`transform="rotate(…)"` attributes on `<text>` elements must be **preserved** — they control
+label orientation for diagonal provinces.
+
+Font size should scale with render canvas width: `size = 16 * (canvasWidth / 1524.0)`,
+clamped to a minimum of 1 px. This keeps labels legible in both the full board and any
+future zoomed renders.
+
+**Acceptance criteria for Bug 1:**
+- After pre-processing, `<text>` elements contain no `font-family` in their style.
+- A unit test covers the style-rewriting helper on a synthetic `<text>` element.
+- The SVG passed to `oksvg` contains the province name text strings for at least the seven
+  capitals: London, Paris, Berlin, Moscow, Rome, Vienna, Constantinople.
+
+---
+
+#### Bug 2 — Unit glyphs all appear the same grey colour
+
+**Root cause:** `dipmap.Overlay` calls `setAttr(svg, id, "fill", colour)` which sets the
+`fill` attribute on the `<g id="unit-…">` group element. However, the inner `<rect>` element
+(generated by `mkapsvg`) has its own hardcoded `fill="#cccccc"` attribute. In SVG, explicit
+attributes on child elements take precedence over inherited `fill` from the parent group.
+The nation colour is set on the group but overridden by the rect, so all units render grey.
+
+**Fix — two complementary changes:**
+
+1. **In `cmd/mkapsvg/main.go`:** Remove the `fill="#cccccc"` attribute from the `<rect>`
+   template so the rect inherits fill from its parent `<g>`. Set the placeholder fill on the
+   `<g>` itself instead: `<g id="…" fill="#cccccc" display="none">`. Then `setAttr` on the
+   group correctly overrides the placeholder.
+
+2. **Regenerate `dipmap/assets/map.svg`** by running `go run ./cmd/mkapsvg/` and committing
+   the result.
+
+`overlay.go` itself does not need to change — the ID-based `setAttr` approach is correct.
+
+**Verify:** After the fix, a unit test in `dipmap/overlay_test.go` should assert that when
+`Overlay` is called with `{"par": {Type:"Army", Nation:"France"}}`, the returned SVG contains
+`id="unit-par-army"` with both `display="inline"` and `fill="#3399CC"` (France blue).
+
+---
+
+#### Bug 3 — Unit glyphs too large; fleet shape not distinctive
+
+**Root cause:** The glyph dimensions chosen in `cmd/mkapsvg/main.go` are proportional to the
+full 1524-wide canvas but visually too large when rendered at typical screen sizes. Fleet
+glyphs (`30×18`) look almost identical to army glyphs (`24×24`) — not narrow enough to read
+as a ship.
+
+**Fix — update glyph geometry in `cmd/mkapsvg/main.go`:**
+
+Suggested target sizes (tune by looking at the rendered map):
+- **Army:** `x="-9" y="-9" width="18" height="18" rx="2"` (reduce from 24×24 to 18×18)
+- **Fleet:** `x="-14" y="-6" width="28" height="12" rx="3"` (keep wide but shorten height;
+  a 2.3:1 aspect ratio reads more clearly as a hull shape)
+
+Letter sizes: army text `font-size="11"`, fleet text `font-size="8"` (scale proportionally).
+
+**Regenerate `dipmap/assets/map.svg`** after updating the template.
+
+**Acceptance criteria for Bug 3:**
+- A unit test in `cmd/mkapsvg/main_test.go` asserts the generated army rect width < 20 and
+  fleet rect width ≥ 24 and fleet rect height < army rect height (i.e. fleets are distinctly
+  wider-and-shorter than armies).
+
+---
+
+#### Combined acceptance criteria
+
+- `/map` (no args) renders a JPEG that contains visible province names.
+- Unit glyphs are coloured by nation (England dark blue, France light blue, Germany grey, etc.).
+- Fleet glyphs are visually narrower than army glyphs.
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
+
+---
+
+### Story 10c — Zoomed /map with Territory and Radius (deferred)
+
+**Goal:** Implement (or re-enable) the `/map <territory> <n>` variant that crops the board
+to a province and its n-hop neighbourhood, highlighted with nation colours.
+
+**Context:** This feature was de-scoped from the initial `/map` work because of two bugs:
+1. Province highlights use a random cycling colour palette rather than nation colours.
+2. The overall render had other quality issues that needed fixing in Story 10b first.
+
+The command is currently wired but the territory+radius code path is commented out
+(`bot/commands.go` always falls through to the full-board render). The functional test
+`TestCommand_Map_WithTerritoryAndRadius` is skipped (`t.Skip`).
+
+**Files:** `dipmap/highlight.go`, `dipmap/highlight_test.go`, `bot/commands.go`,
+`bot/commands_test.go`, `bot/bot_functional_test.go`
+
+---
+
+#### What needs fixing
+
+**Highlight colours (Bug 3 from original user report):**
+The current `Highlight()` function in `dipmap/highlight.go` cycles through a fixed palette
+(`#FF6B6B`, `#4ECDC4`, `#45B7D1`, …) unrelated to nations. The zoomed view should instead
+highlight each province using the colour of the nation that owns a unit there, and use a
+neutral highlight (e.g. `#DDDDDD` at 50% opacity) for provinces with no unit.
+
+`Highlight` needs access to the current game state (units + supply centre ownership) to
+determine per-province colours. Its signature will need to change or a new variant created.
+
+**Re-enable the code path in `bot/commands.go`:**
+- Restore argument parsing for territory and n.
+- Restore the `if territory != "" && n > 0` branch calling `Neighborhood`, `Highlight`,
+  and `RenderZoomed`.
+- Restore `boardGraph()` and the `godipGraph` adapter.
+- Restore the `graph` field on Dispatcher if needed.
+
+**Re-enable tests:**
+- Un-skip `TestCommand_Map_WithTerritoryAndRadius` in `bot/bot_functional_test.go`.
+- Restore unit tests `TestDispatchMap_RejectsInvalidRadius`,
+  `TestDispatchMap_RejectsHighlightError`, `TestDispatchMap_RejectsZoomError`,
+  `TestDispatchMap_UsesCustomGraph` (or equivalent) in `bot/commands_test.go`.
+
+#### Acceptance criteria
+
+- `/map lon 1` and `/map lon 3` produce JPEG images with different dimensions (radius 3
+  covers a larger bounding box).
+- Province highlights are coloured by nation (where a unit is present) or neutral grey
+  (empty provinces).
+- All re-enabled tests pass.
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
 
 ---
 

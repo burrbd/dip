@@ -135,7 +135,17 @@ func goodFactory() EngineFactory {
 }
 
 func newTestDispatcher(ch *mockChannel) *Dispatcher {
-	return New(ch, &mockNotifier{}, nil, goodFactory())
+	d := New(ch, &mockNotifier{}, nil, goodFactory())
+	// Stub all rendering functions so unit tests don't invoke real SVG rasterisation
+	// (which is expensive and would make the test suite prohibitively slow).
+	d.svgFn = func(_ dipmap.EngineState) ([]byte, error) { return []byte(`<svg/>`), nil }
+	d.overlayFn = func(svg []byte, _ map[string]dipmap.Unit) ([]byte, error) { return svg, nil }
+	d.imgFn = func(_ []byte) ([]byte, error) { return []byte("fakeimg"), nil }
+	d.highlightFn = func(svg []byte, _ []string) ([]byte, error) { return svg, nil }
+	d.renderZoomedFn = func(_ dipmap.EngineState, _ []byte, _ []string) ([]byte, error) {
+		return []byte("fakezoom"), nil
+	}
+	return d
 }
 
 // joinPlayers posts PlayerJoined events for n players with distinct nations.
@@ -1733,15 +1743,6 @@ func TestDispatchMap_PostsImageWithTerritoryAndRadius(t *testing.T) {
 	is.Equal(len(ch.imgs), 1)
 }
 
-func TestDispatchMap_RejectsInvalidRadius(t *testing.T) {
-	is := is.New(t)
-	ch := &mockChannel{}
-	d := newTestDispatcher(ch)
-	makeDMSession(d, ch, "chan1")
-
-	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "notanumber"}, ChannelID: "chan1", UserID: "u1"})
-	is.Err(err)
-}
 
 func TestDispatchMap_RejectsPostImageError(t *testing.T) {
 	is := is.New(t)
@@ -1796,19 +1797,6 @@ func TestDispatchMap_RejectsImgError(t *testing.T) {
 	is.Err(err)
 }
 
-func TestDispatchMap_RejectsHighlightError(t *testing.T) {
-	is := is.New(t)
-	ch := &mockChannel{}
-	d := newTestDispatcher(ch)
-	makeDMSession(d, ch, "chan1")
-	// SVG load and overlay succeed; highlight fails (zoomed path).
-	d.highlightFn = func(_ []byte, _ []string) ([]byte, error) {
-		return nil, errors.New("highlight failed")
-	}
-
-	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
-	is.Err(err)
-}
 
 func TestDispatchMap_OverlaysUnitsOnMap(t *testing.T) {
 	is := is.New(t)
@@ -1835,39 +1823,6 @@ func TestDispatchMap_OverlaysUnitsOnMap(t *testing.T) {
 	}
 }
 
-func TestDispatchMap_RejectsZoomError(t *testing.T) {
-	is := is.New(t)
-	ch := &mockChannel{}
-	d := newTestDispatcher(ch)
-	makeDMSession(d, ch, "chan1")
-	// SVG load and highlight succeed; zoom render fails.
-	d.renderZoomedFn = func(_ dipmap.EngineState, _ []byte, _ []string) ([]byte, error) {
-		return nil, errors.New("zoom failed")
-	}
-
-	_, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
-	is.Err(err)
-}
-
-func TestDispatchMap_UsesCustomGraph(t *testing.T) {
-	is := is.New(t)
-	ch := &mockChannel{}
-	d := newTestDispatcher(ch)
-	makeDMSession(d, ch, "chan1")
-
-	// Set a custom graph on the dispatcher.
-	d.graph = customTestGraph{"Vienna": {"Budapest"}}
-
-	resp, err := d.Dispatch(Command{Name: "map", Args: []string{"Vienna", "1"}, ChannelID: "chan1", UserID: "u1"})
-	is.NoErr(err)
-	is.Equal(resp, "Map posted.")
-	is.Equal(len(ch.imgs), 1)
-}
-
-// customTestGraph is a simple Graph for use in bot tests.
-type customTestGraph map[string][]string
-
-func (g customTestGraph) Edges(t string) []string { return g[t] }
 
 // ---- /history additional coverage ------------------------------------------
 

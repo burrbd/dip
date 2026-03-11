@@ -262,6 +262,24 @@ examples of this pattern applied throughout the engine package.
 
 ---
 
+## Map SVG asset (`dipmap/assets/map.svg`)
+
+`dipmap/assets/map.svg` is a **pre-generated, committed file** — the bot embeds it at compile
+time via `//go:embed assets/map.svg` in `dipmap/render.go`. You do **not** need to regenerate
+it to run the bot or tests; just build and go.
+
+`cmd/mkapsvg` is the one-off generator that produced this file. Re-run it only when you change
+the glyph templates or strip pass in `cmd/mkapsvg/main.go`:
+
+```bash
+go run ./cmd/mkapsvg/
+```
+
+After regenerating, **commit the updated `dipmap/assets/map.svg`** — the next build picks it up
+automatically via the embed directive.
+
+---
+
 ## Legacy
 
 The `game/` package is a partial custom adjudicator that predates godip integration. It is

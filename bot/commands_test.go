@@ -136,7 +136,17 @@ func goodFactory() EngineFactory {
 }
 
 func newTestDispatcher(ch *mockChannel) *Dispatcher {
-	return New(ch, &mockNotifier{}, nil, goodFactory())
+	d := New(ch, &mockNotifier{}, nil, goodFactory())
+	// Stub all rendering functions so unit tests don't invoke real SVG rasterisation
+	// (which is expensive and would make the test suite prohibitively slow).
+	d.svgFn = func(_ dipmap.EngineState) ([]byte, error) { return []byte(`<svg/>`), nil }
+	d.overlayFn = func(svg []byte, _ map[string]dipmap.Unit) ([]byte, error) { return svg, nil }
+	d.imgFn = func(_ []byte) ([]byte, error) { return []byte("fakeimg"), nil }
+	d.highlightFn = func(svg []byte, _ []string) ([]byte, error) { return svg, nil }
+	d.renderZoomedFn = func(_ dipmap.EngineState, _ []byte, _ []string) ([]byte, error) {
+		return []byte("fakezoom"), nil
+	}
+	return d
 }
 
 // joinPlayers posts PlayerJoined events for n players with distinct nations.

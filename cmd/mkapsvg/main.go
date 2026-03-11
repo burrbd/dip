@@ -136,10 +136,61 @@ func stripInkscape(svg string) string {
 	return svg
 }
 
+// stripProvincesGroup removes the <g id="provinces"> layer from the SVG.
+// That layer fills every province shape with solid black (#000000), obscuring
+// all other layers when rendered by tdewolff/canvas. Province borders are
+// already rendered by the foreground group; the provinces layer is not needed
+// by the bot's render pipeline.
+func stripProvincesGroup(svg string) string {
+	re := regexp.MustCompile(`(?s)<g\b[^>]*\bid="provinces"[^>]*>`)
+	loc := re.FindStringIndex(svg)
+	if loc == nil {
+		return svg
+	}
+	start := loc[0]
+	pos := loc[1]
+	depth := 1
+	openRe := regexp.MustCompile(`<g\b`)
+	closeRe := regexp.MustCompile(`</g>`)
+	for depth > 0 && pos < len(svg) {
+		openIdx := openRe.FindStringIndex(svg[pos:])
+		closeIdx := closeRe.FindStringIndex(svg[pos:])
+		switch {
+		case openIdx != nil && (closeIdx == nil || openIdx[0] < closeIdx[0]):
+			depth++
+			pos += openIdx[1]
+		case closeIdx != nil:
+			depth--
+			pos += closeIdx[1]
+		default:
+			return svg
+		}
+	}
+	return svg[:start] + svg[pos:]
+}
+
+// fixSVGDimensions replaces percentage width/height on the SVG root element
+// with the numeric values from its viewBox. tdewolff/canvas resolves a
+// percentage width/height against a 1 mm parent, producing a 1×1 px output.
+// Using explicit pixel values gives a full-resolution raster image.
+func fixSVGDimensions(svg string) string {
+	vbRe := regexp.MustCompile(`viewBox="0 0 ([0-9.]+) ([0-9.]+)"`)
+	m := vbRe.FindStringSubmatch(svg)
+	if m == nil {
+		return svg
+	}
+	w, h := m[1], m[2]
+	svg = regexp.MustCompile(`\bwidth="[^"]*%[^"]*"`).ReplaceAllString(svg, `width="`+w+`"`)
+	svg = regexp.MustCompile(`\bheight="[^"]*%[^"]*"`).ReplaceAllString(svg, `height="`+h+`"`)
+	return svg
+}
+
 // generateSVG populates the units layer of the godip SVG with placeholder
 // glyphs and returns the result along with glyph counts.
 func generateSVG(raw []byte) (svg string, fleets, armies int, err error) {
 	svg = stripInkscape(string(raw))
+	svg = stripProvincesGroup(svg)
+	svg = fixSVGDimensions(svg)
 
 	// Find all province centre markers: <path id="<name>Center" d="m cx,cy …"/>
 	centers, err := parseProvinceCenters(svg)

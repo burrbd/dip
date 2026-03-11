@@ -27,6 +27,7 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 10a — SVG Simplification: Strip Inkscape Metadata
 - [x] Story 10b — Map Rendering Fixes: Labels, Unit Colours, and Glyph Geometry
 - [ ] Story 10c — Zoomed /map with Territory and Radius (deferred)
+- [ ] Story 10d — Replace oksvg with tdewolff/canvas for proper text rendering
 - [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -514,6 +515,117 @@ determine per-province colours. Its signature will need to change or a new varia
 - All re-enabled tests pass.
 - `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
 - `go test -v -tags functional ./bot/` passes.
+
+---
+
+### Story 10d — Replace oksvg with tdewolff/canvas for proper text rendering
+
+**Goal:** Replace the `oksvg` + `rasterx` rendering pipeline with
+`github.com/tdewolff/canvas`, which supports the full SVG text model including
+font loading and `transform="rotate(…)"` on `<text>` elements. Switch map output
+from JPEG to lossless PNG. Delete the workaround functions that were masking the
+root cause.
+
+**Root cause of missing labels:** `oksvg`'s `drawFuncs` map
+(`vendor/github.com/srwiley/oksvg/draw.go`) has no handler for `text` or `tspan`
+elements — they are silently discarded regardless of their style. The
+`rewriteTextStyles` and `prepareForRender` functions in `dipmap/render.go` were
+written on the incorrect assumption that simplifying `font-family` would make
+`oksvg` render text. They cannot fix this; `oksvg` will never render text.
+`tdewolff/canvas` handles `<text>`, `<tspan>`, and `transform="rotate(…)"` on
+text elements natively, and resolves fonts from a caller-supplied font family.
+
+**Font:** Embed `LibreBaskerville-Bold.ttf` in the binary via `//go:embed`. The
+SVG's `names` layer already references `LibreBaskerville-Bold` by name; register
+the embedded TTF under that exact family name so the renderer resolves it without
+any style-rewriting. Libre Baskerville is published by Pablo Impallari under the
+**SIL Open Font License 1.1**, which permits embedding in software and commercial
+distribution. Source: https://github.com/impallari/Libre-Baskerville —
+download `LibreBaskerville-Bold.ttf` and commit it to `dipmap/assets/`.
+
+**Output format:** Switch from JPEG to PNG. `tdewolff/canvas` renders to
+`image.Image`; encode with `image/png` (lossless). Update `SVGToJPEG` →
+`SVGToPNG`, the `imgFn` field on `bot.Dispatcher`, and any MIME-type references
+in the platform adapters.
+
+---
+
+#### Dependency setup (requires network — do once, then commit vendor/)
+
+```
+go get github.com/tdewolff/canvas@latest
+go mod tidy
+go mod vendor
+```
+
+Remove `oksvg` and `rasterx` from `go.mod` after replacing all usages. Run
+`go mod tidy` again to drop them cleanly.
+
+---
+
+#### Files
+
+- `dipmap/render.go` — replace rendering pipeline; delete workaround helpers
+- `dipmap/render_test.go` — update tests; assert PNG magic bytes in output
+- `dipmap/assets/LibreBaskerville-Bold.ttf` — new embedded font (OFL 1.1)
+- `go.mod`, `go.sum`, `vendor/` — add `tdewolff/canvas`; remove `oksvg`, `rasterx`
+- `bot/commands.go` — update `imgFn` from `SVGToJPEG` to `SVGToPNG`
+
+---
+
+#### What to delete
+
+The following functions exist solely to work around `oksvg` limitations and must
+be deleted once the renderer is replaced:
+
+- `stripStyles` — removed `<style>` blocks because `oksvg` couldn't parse
+  embedded data URIs; `tdewolff/canvas` handles CSS natively.
+- `rewriteTextStyles` — attempted (ineffectively) to make `oksvg` render text;
+  no longer needed.
+- `prepareForRender` — converted `display:none` to `opacity:0` because `oksvg`
+  does not support the CSS `display` property; `tdewolff/canvas` supports it.
+- `loadClassicalSVGWith`, `renderWithLoader` — test helpers for the above; delete
+  with their callers.
+
+Keep `loadEmbeddedSVG` (or an equivalent) as the single entry point that reads the
+embedded `map.svg`.
+
+---
+
+#### Rendering pipeline after this story
+
+```
+loadEmbeddedSVG()          read dipmap/assets/map.svg (embedded)
+        │
+        ▼
+Overlay(svg, units)        activate unit glyphs by ID (unchanged)
+        │
+        ▼
+SVGToPNG(svg)              tdewolff/canvas parses SVG, loads
+        │                  LibreBaskerville-Bold.ttf, renders text
+        │                  and paths to image.Image, encodes PNG
+        ▼
+[]byte PNG
+```
+
+---
+
+#### Acceptance criteria
+
+- `go test -v -cover -race ./...` passes at 100% for `dipmap/` and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
+- The bytes returned by `SVGToPNG` begin with the PNG magic number
+  (`\x89PNG`); a unit test asserts this.
+- The SVG passed to the renderer is **not** pre-processed to strip styles or
+  rewrite font references — the font is resolved via the registered font family.
+- `stripStyles`, `rewriteTextStyles`, and `prepareForRender` no longer exist in
+  `dipmap/render.go`; the file contains no references to `oksvg` or `rasterx`.
+- `go.mod` no longer lists `github.com/srwiley/oksvg` or
+  `github.com/srwiley/rasterx`.
+- A render integration test loads the real `dipmap/assets/map.svg`, calls
+  `SVGToPNG`, and asserts the output is a valid non-empty PNG. The test does not
+  assert pixel colours (font rendering is deterministic but platform-dependent);
+  asserting magic bytes and minimum file size (> 50 KB) is sufficient.
 
 ---
 

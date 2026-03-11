@@ -1,14 +1,154 @@
+# codeberg.org/go-pdf/fpdf v0.11.1
+## explicit; go 1.21
+codeberg.org/go-pdf/fpdf
+# github.com/BurntSushi/freetype-go v0.0.0-20160129220410-b763ddbfe298
+## explicit
+github.com/BurntSushi/freetype-go/freetype
+github.com/BurntSushi/freetype-go/freetype/raster
+github.com/BurntSushi/freetype-go/freetype/truetype
+# github.com/BurntSushi/graphics-go v0.0.0-20160129215708-b43f31a4a966
+## explicit
+github.com/BurntSushi/graphics-go/graphics
+github.com/BurntSushi/graphics-go/graphics/convolve
+github.com/BurntSushi/graphics-go/graphics/interp
+# github.com/BurntSushi/xgb v0.0.0-20210121224620-deaf085860bc
+## explicit
+github.com/BurntSushi/xgb
+github.com/BurntSushi/xgb/shape
+github.com/BurntSushi/xgb/xinerama
+github.com/BurntSushi/xgb/xproto
+# github.com/BurntSushi/xgbutil v0.0.0-20190907113008-ad855c713046
+## explicit
+github.com/BurntSushi/xgbutil
+github.com/BurntSushi/xgbutil/ewmh
+github.com/BurntSushi/xgbutil/icccm
+github.com/BurntSushi/xgbutil/keybind
+github.com/BurntSushi/xgbutil/mousebind
+github.com/BurntSushi/xgbutil/xevent
+github.com/BurntSushi/xgbutil/xgraphics
+github.com/BurntSushi/xgbutil/xprop
+github.com/BurntSushi/xgbutil/xrect
+github.com/BurntSushi/xgbutil/xwindow
+# github.com/ByteArena/poly2tri-go v0.0.0-20170716161910-d102ad91854f
+## explicit
+github.com/ByteArena/poly2tri-go
+# github.com/andybalholm/brotli v1.2.0
+## explicit; go 1.22
+github.com/andybalholm/brotli
+github.com/andybalholm/brotli/matchfinder
+# github.com/benoitkugler/textlayout v0.3.1
+## explicit; go 1.17
+github.com/benoitkugler/textlayout/language
+github.com/benoitkugler/textlayout/unicodedata
+# github.com/benoitkugler/textprocessing v0.0.3
+## explicit; go 1.16
+github.com/benoitkugler/textprocessing/fribidi
 # github.com/cheekybits/is v0.0.0-20150225183255-68e9c0620927
 ## explicit
 github.com/cheekybits/is
-# github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
-## explicit; go 1.17
-github.com/srwiley/oksvg
+# github.com/go-fonts/latin-modern v0.3.3
+## explicit; go 1.19
+github.com/go-fonts/latin-modern/lmmath
+github.com/go-fonts/latin-modern/lmmono10italic
+github.com/go-fonts/latin-modern/lmmono10regular
+github.com/go-fonts/latin-modern/lmmono12regular
+github.com/go-fonts/latin-modern/lmmono8regular
+github.com/go-fonts/latin-modern/lmmono9regular
+github.com/go-fonts/latin-modern/lmmonocaps10regular
+github.com/go-fonts/latin-modern/lmmonoslant10regular
+github.com/go-fonts/latin-modern/lmroman10bold
+github.com/go-fonts/latin-modern/lmroman10bolditalic
+github.com/go-fonts/latin-modern/lmroman10italic
+github.com/go-fonts/latin-modern/lmroman10regular
+github.com/go-fonts/latin-modern/lmroman12bold
+github.com/go-fonts/latin-modern/lmroman12italic
+github.com/go-fonts/latin-modern/lmroman12regular
+github.com/go-fonts/latin-modern/lmroman17regular
+github.com/go-fonts/latin-modern/lmroman5bold
+github.com/go-fonts/latin-modern/lmroman5regular
+github.com/go-fonts/latin-modern/lmroman6bold
+github.com/go-fonts/latin-modern/lmroman6regular
+github.com/go-fonts/latin-modern/lmroman7bold
+github.com/go-fonts/latin-modern/lmroman7italic
+github.com/go-fonts/latin-modern/lmroman7regular
+github.com/go-fonts/latin-modern/lmroman8bold
+github.com/go-fonts/latin-modern/lmroman8italic
+github.com/go-fonts/latin-modern/lmroman8regular
+github.com/go-fonts/latin-modern/lmroman9bold
+github.com/go-fonts/latin-modern/lmroman9italic
+github.com/go-fonts/latin-modern/lmroman9regular
+github.com/go-fonts/latin-modern/lmromancaps10regular
+github.com/go-fonts/latin-modern/lmromandunh10regular
+github.com/go-fonts/latin-modern/lmromanslant10bold
+github.com/go-fonts/latin-modern/lmromanslant10regular
+github.com/go-fonts/latin-modern/lmromanslant12regular
+github.com/go-fonts/latin-modern/lmromanslant17regular
+github.com/go-fonts/latin-modern/lmromanslant8regular
+github.com/go-fonts/latin-modern/lmromanslant9regular
+github.com/go-fonts/latin-modern/lmromanunsl10regular
+github.com/go-fonts/latin-modern/lmsans10bold
+github.com/go-fonts/latin-modern/lmsans10oblique
+github.com/go-fonts/latin-modern/lmsans10regular
+github.com/go-fonts/latin-modern/lmsans12oblique
+github.com/go-fonts/latin-modern/lmsans12regular
+github.com/go-fonts/latin-modern/lmsans17oblique
+github.com/go-fonts/latin-modern/lmsans17regular
+github.com/go-fonts/latin-modern/lmsans8oblique
+github.com/go-fonts/latin-modern/lmsans8regular
+github.com/go-fonts/latin-modern/lmsans9oblique
+github.com/go-fonts/latin-modern/lmsans9regular
+github.com/go-fonts/latin-modern/lmsansdemicond10regular
+github.com/go-fonts/latin-modern/lmsansquot8oblique
+github.com/go-fonts/latin-modern/lmsansquot8regular
+# github.com/go-text/typesetting v0.3.0
+## explicit; go 1.19
+github.com/go-text/typesetting/font
+github.com/go-text/typesetting/font/cff
+github.com/go-text/typesetting/font/cff/interpreter
+github.com/go-text/typesetting/font/opentype
+github.com/go-text/typesetting/font/opentype/tables
+github.com/go-text/typesetting/harfbuzz
+github.com/go-text/typesetting/language
+github.com/go-text/typesetting/unicodedata
+# github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0
+## explicit
+github.com/golang/freetype/raster
+github.com/golang/freetype/truetype
 # github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
-## explicit; go 1.17
+## explicit
 github.com/srwiley/rasterx
+# github.com/srwiley/scanx v0.0.0-20190309010443-e94503791388
+## explicit
+github.com/srwiley/scanx
+# github.com/tdewolff/canvas v0.0.0-20260307092048-5da4636eb131
+## explicit; go 1.24
+github.com/tdewolff/canvas
+github.com/tdewolff/canvas/renderers/rasterizer
+github.com/tdewolff/canvas/text
+# github.com/tdewolff/font v0.0.0-20260129132752-ab952538a56d
+## explicit; go 1.24
+github.com/tdewolff/font
+# github.com/tdewolff/minify/v2 v2.24.4
+## explicit; go 1.17
+github.com/tdewolff/minify/v2
+# github.com/tdewolff/parse/v2 v2.8.5
+## explicit; go 1.11
+github.com/tdewolff/parse/v2
+github.com/tdewolff/parse/v2/buffer
+github.com/tdewolff/parse/v2/css
+github.com/tdewolff/parse/v2/strconv
+github.com/tdewolff/parse/v2/xml
+# github.com/yuin/goldmark v1.7.13
+## explicit; go 1.22
+github.com/yuin/goldmark
+github.com/yuin/goldmark/ast
+github.com/yuin/goldmark/parser
+github.com/yuin/goldmark/renderer
+github.com/yuin/goldmark/renderer/html
+github.com/yuin/goldmark/text
+github.com/yuin/goldmark/util
 # github.com/zond/godip v0.6.5
-## explicit; go 1.20
+## explicit
 github.com/zond/godip
 github.com/zond/godip/graph
 github.com/zond/godip/orders
@@ -17,39 +157,36 @@ github.com/zond/godip/state
 github.com/zond/godip/variants/classical
 github.com/zond/godip/variants/classical/start
 github.com/zond/godip/variants/common
-# golang.org/x/exp v0.0.0-20200228211341-fcea875c7e85
-## explicit; go 1.12
-# golang.org/x/image v0.0.0-20211028202545-6944b10bf410
-## explicit; go 1.12
-golang.org/x/image/colornames
+# golang.org/x/exp v0.0.0-20251017212417-90e834f514db
+## explicit; go 1.24
+# golang.org/x/image v0.35.0
+## explicit; go 1.24
+golang.org/x/image/ccitt
+golang.org/x/image/draw
+golang.org/x/image/font
+golang.org/x/image/font/sfnt
+golang.org/x/image/math/f64
 golang.org/x/image/math/fixed
+golang.org/x/image/tiff
+golang.org/x/image/tiff/lzw
 golang.org/x/image/vector
-# golang.org/x/net v0.0.0-20211118161319-6a13c67c3ce4
-## explicit; go 1.17
+# golang.org/x/net v0.46.0
+## explicit; go 1.24
 golang.org/x/net/html
 golang.org/x/net/html/atom
-golang.org/x/net/html/charset
-# golang.org/x/text v0.3.6
-## explicit; go 1.11
+# golang.org/x/text v0.33.0
+## explicit; go 1.24
 golang.org/x/text/encoding
 golang.org/x/text/encoding/charmap
-golang.org/x/text/encoding/htmlindex
 golang.org/x/text/encoding/internal
 golang.org/x/text/encoding/internal/identifier
-golang.org/x/text/encoding/japanese
-golang.org/x/text/encoding/korean
-golang.org/x/text/encoding/simplifiedchinese
-golang.org/x/text/encoding/traditionalchinese
 golang.org/x/text/encoding/unicode
-golang.org/x/text/internal/language
-golang.org/x/text/internal/language/compact
-golang.org/x/text/internal/tag
 golang.org/x/text/internal/utf8internal
-golang.org/x/text/language
 golang.org/x/text/runes
 golang.org/x/text/transform
+golang.org/x/text/unicode/bidi
 # gonum.org/v1/gonum v0.6.2
-## explicit; go 1.12
+## explicit
 gonum.org/v1/gonum/blas
 gonum.org/v1/gonum/blas/blas64
 gonum.org/v1/gonum/blas/cblas128
@@ -71,3 +208,21 @@ gonum.org/v1/gonum/lapack
 gonum.org/v1/gonum/lapack/gonum
 gonum.org/v1/gonum/lapack/lapack64
 gonum.org/v1/gonum/mat
+# modernc.org/knuth v0.5.5
+## explicit; go 1.21
+modernc.org/knuth
+modernc.org/knuth/tex
+# modernc.org/token v1.1.0
+## explicit
+modernc.org/token
+# star-tex.org/x/tex v0.7.1
+## explicit; go 1.23
+star-tex.org/x/tex
+star-tex.org/x/tex/dvi
+star-tex.org/x/tex/dvi/dvipdf
+star-tex.org/x/tex/font/afm
+star-tex.org/x/tex/font/fixed
+star-tex.org/x/tex/font/tfm
+star-tex.org/x/tex/internal/iobuf
+star-tex.org/x/tex/internal/tds
+star-tex.org/x/tex/kpath

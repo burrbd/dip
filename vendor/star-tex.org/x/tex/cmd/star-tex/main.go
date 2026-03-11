@@ -1,0 +1,111 @@
+// Copyright ©2021 The star-tex Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Command star-tex compiles TeX documents to PDFs.
+package main // import "star-tex.org/x/tex/cmd/star-tex"
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"star-tex.org/x/tex"
+	"star-tex.org/x/tex/kpath"
+)
+
+var (
+	fset = flag.NewFlagSet("star-tex", flag.ContinueOnError)
+
+	usage = `Usage: star-tex [options] FILE.tex [FILE.pdf]
+
+ex:
+ $> star-tex ./testdata/hello.tex
+ $> star-tex ./testdata/hello.tex ./out.pdf
+
+options:
+`
+)
+
+func main() {
+	os.Exit(xmain(os.Stdout, os.Stderr, os.Args[1:]))
+}
+
+func xmain(stdout, stderr io.Writer, args []string) int {
+	msg := log.New(stderr, "star-tex: ", 0)
+
+	texmf := fset.String("texmf", "", "path to TexMF root")
+
+	fset.Usage = func() {
+		fmt.Fprint(stderr, usage)
+		fset.PrintDefaults()
+	}
+
+	err := fset.Parse(args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		msg.Printf("could not parse args %q: %+v", args, err)
+		return 1
+	}
+
+	if fset.NArg() < 1 {
+		msg.Printf("missing file argument")
+		fset.Usage()
+		return 1
+	}
+
+	args = fset.Args()
+
+	f, err := os.Open(args[0])
+	if err != nil {
+		msg.Printf("could not open input TeX file: %+v", err)
+		return 1
+	}
+	defer f.Close()
+
+	oname := strings.Replace(filepath.Base(f.Name()), ".tex", ".pdf", 1)
+	if len(args) > 1 {
+		oname = args[1]
+	}
+
+	o, err := os.Create(oname)
+	if err != nil {
+		msg.Printf("could not open output PDF file: %+v", err)
+		return 1
+	}
+	defer o.Close()
+
+	ktx := kpath.New()
+	if *texmf != "" {
+		ktx, err = kpath.NewFromFS(os.DirFS(*texmf))
+		if err != nil {
+			msg.Printf("could not create kpath context: %+v", err)
+			return 1
+		}
+	}
+
+	err = process(ktx, o, f, os.Stdout, os.Stderr)
+	if err != nil {
+		msg.Printf("could not run star-tex: %+v", err)
+		return 1
+	}
+
+	err = o.Close()
+	if err != nil {
+		msg.Printf("could not close output PDF file: %+v", err)
+		return 1
+	}
+
+	return 0
+}
+
+func process(ktx kpath.Context, o io.Writer, f io.Reader, stdout, stderr io.Writer) error {
+	return tex.ToPDF(ktx, o, f)
+}

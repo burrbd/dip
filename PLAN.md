@@ -22,8 +22,8 @@ Never mark a story done if any test is failing or any criterion is unmet.
 
 ## Stories
 
-- [ ] Story 9g — Map Rendering Polish (zoom radius, labels, unit geometry, scale, z-order)
-- [ ] Story 9h — Pre-populate SVG with unit placeholder glyphs
+- [x] Story 9g — Map Rendering Polish (zoom radius, labels, unit geometry, scale, z-order)
+- [x] Story 9h — Pre-populate SVG with unit placeholder glyphs
 - [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)

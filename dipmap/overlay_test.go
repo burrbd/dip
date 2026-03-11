@@ -7,242 +7,227 @@ import (
 	"github.com/cheekybits/is"
 )
 
-// noCoordsSVG is a synthetic SVG whose province element has no numeric
-// coordinate data, exercising the len(xs)==0 branch in provinceCenter.
-const noCoordsSVG = `<?xml version="1.0"?>
-<svg xmlns="http://www.w3.org/2000/svg"
-   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape">
-  <polygon inkscape:label="weird" points="abc def" id="weird"/>
-</svg>`
+// ---- test SVG fixtures ------------------------------------------------------
 
-// scForegroundSVG is a synthetic SVG that includes a supply-centers foreground
-// copy group before the province shapes, so tests can verify that Overlay
-// re-injects it after the units layer.
-const scForegroundSVG = `<?xml version="1.0"?>
+// unitSVG is a minimal SVG that contains two pre-placed unit glyph elements
+// (matching the format produced by cmd/mkapsvg) for use in overlay tests.
+const unitSVG = `<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    viewBox="0 0 100 100">
-  <g inkscape:label="supply-centers foreground copy"><circle r="5" cx="15" cy="15"/></g>
-  <polygon inkscape:label="foo" points="10,10 20,10 20,20 10,20" id="foo"/>
+  <g id="units">
+    <g id="unit-foo-army" transform="translate(50,50)" display="none">
+      <rect x="-12" y="-12" width="24" height="24" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
+      <text x="0" y="5" text-anchor="middle" font-size="14" fill="#000000">A</text>
+    </g>
+    <g id="unit-foo-fleet" transform="translate(50,50)" display="none">
+      <rect x="-15" y="-9" width="30" height="18" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
+      <text x="0" y="5" text-anchor="middle" font-size="10" fill="#000000">F</text>
+    </g>
+    <g id="unit-bar-army" transform="translate(20,20)" display="none">
+      <rect x="-12" y="-12" width="24" height="24" rx="3" fill="#cccccc" stroke="#ffffff" stroke-width="2"/>
+      <text x="0" y="5" text-anchor="middle" font-size="14" fill="#000000">A</text>
+    </g>
+  </g>
 </svg>`
 
 // ---- Overlay ----------------------------------------------------------------
 
 func TestOverlay_EmptyUnits_ReturnsSVGUnchanged(t *testing.T) {
 	is := is.New(t)
-	result, err := Overlay([]byte(renderTestSVG), nil)
+	result, err := Overlay([]byte(unitSVG), nil)
 	is.NoErr(err)
-	is.Equal(string(result), renderTestSVG)
+	is.Equal(string(result), unitSVG)
 }
 
-func TestOverlay_KnownProvince_InjectsGlyph(t *testing.T) {
+func TestOverlay_ActivatesArmyGlyph(t *testing.T) {
 	is := is.New(t)
 	units := map[string]Unit{
 		"foo": {Type: "Army", Nation: "Austria"},
 	}
-	result, err := Overlay([]byte(renderTestSVG), units)
+	result, err := Overlay([]byte(unitSVG), units)
 	is.NoErr(err)
 	s := string(result)
-	if !strings.Contains(s, `id="units"`) {
-		t.Error(`expected <g id="units"> layer in SVG`)
+
+	// The army glyph for "foo" must now have display="inline".
+	if !strings.Contains(s, `id="unit-foo-army"`) {
+		t.Fatal("expected unit-foo-army glyph in SVG")
 	}
+	if !strings.Contains(s, `display="inline"`) {
+		t.Error("expected display=inline on activated glyph")
+	}
+	// Nation colour must be set.
 	if !strings.Contains(s, `fill="#CC0000"`) {
-		t.Error("expected Austria's colour in unit glyph")
-	}
-	if !strings.Contains(s, ">A<") {
-		t.Error("expected Army label 'A' in unit glyph")
+		t.Error("expected Austria's colour #CC0000")
 	}
 }
 
-func TestOverlay_FleetUnit_InjectsFleetLabel(t *testing.T) {
+func TestOverlay_ActivatesFleetGlyph(t *testing.T) {
 	is := is.New(t)
 	units := map[string]Unit{
 		"foo": {Type: "Fleet", Nation: "England"},
 	}
-	result, err := Overlay([]byte(renderTestSVG), units)
+	result, err := Overlay([]byte(unitSVG), units)
 	is.NoErr(err)
-	if !strings.Contains(string(result), ">F<") {
-		t.Error("expected Fleet label 'F' in unit glyph")
+	s := string(result)
+	if !strings.Contains(s, `id="unit-foo-fleet"`) {
+		t.Fatal("expected unit-foo-fleet glyph in SVG")
+	}
+	if !strings.Contains(s, `display="inline"`) {
+		t.Error("expected display=inline on activated fleet glyph")
+	}
+	if !strings.Contains(s, `fill="#003399"`) {
+		t.Error("expected England's colour #003399")
 	}
 }
 
-func TestOverlay_UnknownProvince_ReturnsSVGUnchanged(t *testing.T) {
+func TestOverlay_UnknownProvince_LogsAndContinues(t *testing.T) {
 	is := is.New(t)
-	// Province name is not in the SVG → no glyph generated → no units layer.
+	// Province "nonexistent" has no glyph in the SVG. The function must not
+	// return an error; it logs to stderr and skips the province.
 	units := map[string]Unit{
 		"nonexistent": {Type: "Army", Nation: "France"},
 	}
-	result, err := Overlay([]byte(renderTestSVG), units)
+	result, err := Overlay([]byte(unitSVG), units)
 	is.NoErr(err)
-	if strings.Contains(string(result), `id="units"`) {
-		t.Error(`unexpected <g id="units"> when no province is found`)
+	// SVG must be otherwise unchanged — no display=inline added.
+	if strings.Contains(string(result), `display="inline"`) {
+		t.Error("expected no display=inline when province not found")
 	}
 }
 
-// ---- provinceCenter ---------------------------------------------------------
-
-func TestProvinceCenter_ValidProvince_ReturnsCentroid(t *testing.T) {
-	is := is.New(t)
-	// "foo" has points "10,10 20,10 20,20 10,20" → centroid = (15, 15).
-	cx, cy, ok := provinceCenter(renderTestSVG, "foo")
-	is.Equal(ok, true)
-	is.Equal(cx, 15.0)
-	is.Equal(cy, 15.0)
-}
-
-func TestProvinceCenter_UnknownProvince_ReturnsFalse(t *testing.T) {
-	is := is.New(t)
-	_, _, ok := provinceCenter(renderTestSVG, "nonexistent")
-	is.Equal(ok, false)
-}
-
-func TestProvinceCenter_NoNumericCoordinates_ReturnsFalse(t *testing.T) {
-	is := is.New(t)
-	// Province is found but its points attribute contains no parseable numbers.
-	_, _, ok := provinceCenter(noCoordsSVG, "weird")
-	is.Equal(ok, false)
-}
-
-// ---- liftSupplyCenterForeground ---------------------------------------------
-
-func TestLiftSupplyCenterForeground_Found_RemovesGroupAndReturnsIt(t *testing.T) {
-	is := is.New(t)
-	result, lifted := liftSupplyCenterForeground(scForegroundSVG)
-	if strings.Contains(result, `inkscape:label="supply-centers foreground copy"`) {
-		t.Error("expected foreground copy group removed from result")
-	}
-	if !strings.Contains(lifted, `inkscape:label="supply-centers foreground copy"`) {
-		t.Error("expected foreground copy group in lifted string")
-	}
-	if !strings.Contains(lifted, `<circle`) {
-		t.Error("expected circle element inside lifted group")
-	}
-	// Province shape must still be in result so Overlay can compute centroids.
-	if !strings.Contains(result, `inkscape:label="foo"`) {
-		t.Error("expected province shape preserved in result")
-	}
-	is.NotNil(result)
-}
-
-func TestLiftSupplyCenterForeground_LabelNotFound_ReturnsSVGUnchanged(t *testing.T) {
-	result, lifted := liftSupplyCenterForeground(renderTestSVG)
-	if result != renderTestSVG {
-		t.Error("expected svg unchanged when label not found")
-	}
-	if lifted != "" {
-		t.Errorf("expected empty lifted, got %q", lifted)
-	}
-}
-
-func TestLiftSupplyCenterForeground_NoGBeforeLabel_ReturnsSVGUnchanged(t *testing.T) {
-	// Label present but no <g before it — should return unchanged.
-	svg := `<svg>` + `inkscape:label="supply-centers foreground copy"` + `</svg>`
-	result, lifted := liftSupplyCenterForeground(svg)
-	if result != svg {
-		t.Error("expected svg unchanged when no <g before label")
-	}
-	if lifted != "" {
-		t.Errorf("expected empty lifted, got %q", lifted)
-	}
-}
-
-func TestLiftSupplyCenterForeground_UnclosedGroup_ReturnsSVGUnchanged(t *testing.T) {
-	// Group is opened but never closed — findGroupEnd returns -1.
-	svg := `<svg><g inkscape:label="supply-centers foreground copy"><unclosed</svg>`
-	result, lifted := liftSupplyCenterForeground(svg)
-	if result != svg {
-		t.Error("expected svg unchanged when group end not found")
-	}
-	if lifted != "" {
-		t.Errorf("expected empty lifted, got %q", lifted)
-	}
-}
-
-// ---- findGroupEnd -----------------------------------------------------------
-
-func TestFindGroupEnd_SimpleGroup_ReturnsCorrectOffset(t *testing.T) {
-	s := `<g id="x"><rect/></g>extra`
-	end := findGroupEnd(s)
-	if end != len(`<g id="x"><rect/></g>`) {
-		t.Errorf("expected %d, got %d", len(`<g id="x"><rect/></g>`), end)
-	}
-}
-
-func TestFindGroupEnd_NestedGroups_ReturnsOutermostClose(t *testing.T) {
-	s := `<g><g><rect/></g></g>after`
-	end := findGroupEnd(s)
-	if end != len(`<g><g><rect/></g></g>`) {
-		t.Errorf("expected %d, got %d", len(`<g><g><rect/></g></g>`), end)
-	}
-}
-
-func TestFindGroupEnd_SelfClosingInnerGroup_NotCounted(t *testing.T) {
-	s := `<g id="outer"><g id="sc"/></g>tail`
-	end := findGroupEnd(s)
-	if end != len(`<g id="outer"><g id="sc"/></g>`) {
-		t.Errorf("expected %d, got %d", len(`<g id="outer"><g id="sc"/></g>`), end)
-	}
-}
-
-func TestFindGroupEnd_NonGroupTag_IgnoredInDepthCount(t *testing.T) {
-	// <google> starts with <g but is not a group tag, so depth is unaffected.
-	s := `<g id="outer"><google>text</google></g>after`
-	end := findGroupEnd(s)
-	if end != len(`<g id="outer"><google>text</google></g>`) {
-		t.Errorf("expected %d, got %d", len(`<g id="outer"><google>text</google></g>`), end)
-	}
-}
-
-func TestFindGroupEnd_UnclosedGroup_ReturnsMinusOne(t *testing.T) {
-	s := `<g id="x"><rect/>`
-	end := findGroupEnd(s)
-	if end != -1 {
-		t.Errorf("expected -1, got %d", end)
-	}
-}
-
-// ---- Overlay (with supply-centre foreground lifting) ------------------------
-
-func TestOverlay_LiftsForegroundAboveUnits(t *testing.T) {
+func TestOverlay_CoastalVariant_NormalisesSlash(t *testing.T) {
+	// Province "stp/nc" should map to id "unit-stp-nc-fleet".
+	svg := `<svg><g id="unit-stp-nc-fleet" display="none"/></svg>`
 	units := map[string]Unit{
-		"foo": {Type: "Army", Nation: "England"},
+		"stp/nc": {Type: "Fleet", Nation: "Russia"},
 	}
-	result, err := Overlay([]byte(scForegroundSVG), units)
+	result, err := Overlay([]byte(svg), units)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(string(result), `display="inline"`) {
+		t.Error("expected display=inline after activating stp/nc fleet")
+	}
+}
+
+func TestOverlay_AllStartingUnits_ActivatesCorrectCount(t *testing.T) {
+	is := is.New(t)
+	// Build a synthetic SVG with 22 unit glyph placeholders.
+	var glyphs strings.Builder
+	startingUnits := map[string]Unit{
+		"lon": {Type: "Fleet", Nation: "England"},
+		"edi": {Type: "Fleet", Nation: "England"},
+		"lvp": {Type: "Army", Nation: "England"},
+		"bre": {Type: "Fleet", Nation: "France"},
+		"par": {Type: "Army", Nation: "France"},
+		"mar": {Type: "Army", Nation: "France"},
+		"kie": {Type: "Fleet", Nation: "Germany"},
+		"ber": {Type: "Army", Nation: "Germany"},
+		"mun": {Type: "Army", Nation: "Germany"},
+		"nap": {Type: "Fleet", Nation: "Italy"},
+		"rom": {Type: "Army", Nation: "Italy"},
+		"ven": {Type: "Army", Nation: "Italy"},
+		"tri": {Type: "Fleet", Nation: "Austria"},
+		"vie": {Type: "Army", Nation: "Austria"},
+		"bud": {Type: "Army", Nation: "Austria"},
+		"ank": {Type: "Fleet", Nation: "Turkey"},
+		"con": {Type: "Army", Nation: "Turkey"},
+		"smy": {Type: "Army", Nation: "Turkey"},
+		"sev": {Type: "Fleet", Nation: "Russia"},
+		"mos": {Type: "Army", Nation: "Russia"},
+		"war": {Type: "Army", Nation: "Russia"},
+		"stp/sc": {Type: "Fleet", Nation: "Russia"},
+	}
+	// Generate placeholder glyphs for all units.
+	for prov, u := range startingUnits {
+		pid := strings.ReplaceAll(prov, "/", "-")
+		t2 := strings.ToLower(u.Type)
+		glyphs.WriteString(`<g id="unit-` + pid + `-` + t2 + `" display="none"/>` + "\n")
+	}
+	svg := `<svg xmlns="http://www.w3.org/2000/svg">` + glyphs.String() + `</svg>`
+
+	result, err := Overlay([]byte(svg), startingUnits)
+	is.NoErr(err)
+
 	s := string(result)
-	unitsIdx := strings.Index(s, `id="units"`)
-	foreIdx := strings.Index(s, `supply-centers foreground copy`)
-	if unitsIdx < 0 {
-		t.Fatal("expected units layer in result")
-	}
-	if foreIdx < 0 {
-		t.Fatal("expected supply-centers foreground copy in result")
-	}
-	if foreIdx < unitsIdx {
-		t.Error("expected supply-centers foreground copy to appear AFTER units layer")
+	count := strings.Count(s, `display="inline"`)
+	if count != 22 {
+		t.Errorf("expected 22 display=inline elements, got %d", count)
 	}
 }
 
-// ---- unitGlyph --------------------------------------------------------------
+// ---- setAttr ----------------------------------------------------------------
 
-func TestUnitGlyph_Army_KnownNation_UsesNationColour(t *testing.T) {
-	glyph := unitGlyph(100, 200, Unit{Type: "Army", Nation: "France"})
-	if !strings.Contains(glyph, ">A<") {
-		t.Error("expected Army label 'A'")
-	}
-	if !strings.Contains(glyph, "#3399CC") {
-		t.Error("expected France's colour #3399CC")
+func TestSetAttr_UpdatesExistingAttribute(t *testing.T) {
+	is := is.New(t)
+	svg := `<g id="unit-vie-army" display="none" fill="#cccccc"/>`
+	result := setAttr(svg, "unit-vie-army", "display", "inline")
+	is.Equal(result, `<g id="unit-vie-army" display="inline" fill="#cccccc"/>`)
+}
+
+func TestSetAttr_InsertsNewAttribute(t *testing.T) {
+	svg := `<g id="unit-vie-army" display="none"/>`
+	result := setAttr(svg, "unit-vie-army", "fill", "#CC0000")
+	if !strings.Contains(result, `fill="#CC0000"`) {
+		t.Errorf("expected fill attribute in result: %q", result)
 	}
 }
 
-func TestUnitGlyph_Fleet_UnknownNation_UsesDefaultColour(t *testing.T) {
-	glyph := unitGlyph(100, 200, Unit{Type: "Fleet", Nation: "Narnia"})
-	if !strings.Contains(glyph, ">F<") {
-		t.Error("expected Fleet label 'F'")
+func TestSetAttr_ElementNotFound_ReturnsUnchanged(t *testing.T) {
+	is := is.New(t)
+	svg := `<g id="unit-vie-army" display="none"/>`
+	result := setAttr(svg, "unit-nonexistent-army", "display", "inline")
+	is.Equal(result, svg)
+}
+
+func TestSetAttr_SelfClosingTag_InsertsAttribute(t *testing.T) {
+	// Element with no existing fill; self-closing form.
+	svg := `<g id="unit-lon-fleet"/>`
+	result := setAttr(svg, "unit-lon-fleet", "fill", "#003399")
+	if !strings.Contains(result, `fill="#003399"`) {
+		t.Errorf("expected fill attribute in self-closing tag: %q", result)
 	}
-	if !strings.Contains(glyph, "#333333") {
-		t.Error("expected default colour #333333 for unknown nation")
+}
+
+func TestSetAttr_OpenTag_InsertsAttribute(t *testing.T) {
+	// Element in open-tag form (not self-closing).
+	svg := `<g id="unit-lon-fleet" display="none">` + "\n  <rect/>\n</g>"
+	result := setAttr(svg, "unit-lon-fleet", "fill", "#003399")
+	if !strings.Contains(result, `fill="#003399"`) {
+		t.Errorf("expected fill attribute in open tag: %q", result)
 	}
+}
+
+func TestSetAttr_NoTagStartBeforeID_ReturnsUnchanged(t *testing.T) {
+	// id= appears in the string but there is no '<' before it.
+	svg := `id="unit-vie-army" display="none"/>`
+	result := setAttr(svg, "unit-vie-army", "display", "inline")
+	if result != svg {
+		t.Errorf("expected svg unchanged when no tag start found, got %q", result)
+	}
+}
+
+func TestSetAttr_NoTagEnd_ReturnsUnchanged(t *testing.T) {
+	// id= appears inside a tag that has no closing '>'.
+	svg := `<g id="unit-vie-army" display="none"`
+	result := setAttr(svg, "unit-vie-army", "display", "inline")
+	if result != svg {
+		t.Errorf("expected svg unchanged when no tag end found, got %q", result)
+	}
+}
+
+// ---- nationColour -----------------------------------------------------------
+
+func TestNationColour_KnownNation_ReturnsColour(t *testing.T) {
+	is := is.New(t)
+	is.Equal(nationColour("England"), "#003399")
+	is.Equal(nationColour("France"), "#3399CC")
+	is.Equal(nationColour("Austria"), "#CC0000")
+}
+
+func TestNationColour_UnknownNation_ReturnsDefault(t *testing.T) {
+	is := is.New(t)
+	is.Equal(nationColour("Narnia"), "#333333")
+	is.Equal(nationColour(""), "#333333")
 }

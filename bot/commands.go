@@ -698,12 +698,28 @@ func (d *Dispatcher) handleHistory(cmd Command) (string, error) {
 	return "", fmt.Errorf("bot: no history found for turn %q", turn)
 }
 
-// boardGraph returns the Dispatcher's graph or EmptyGraph if none is set.
+// godipGraph adapts the classical godip board graph to the dipmap.Graph
+// interface used for neighbourhood BFS queries.
+type godipGraph struct{ g godip.Graph }
+
+// Edges returns all province names directly adjacent to territory.
+func (gg godipGraph) Edges(territory string) []string {
+	em := gg.g.Edges(godip.Province(territory), false)
+	result := make([]string, 0, len(em))
+	for p := range em {
+		result = append(result, string(p))
+	}
+	return result
+}
+
+// boardGraph returns the Dispatcher's graph. If none is set it falls back
+// to the classical variant's board graph so that /map radius queries work
+// correctly out of the box.
 func (d *Dispatcher) boardGraph() dipmap.Graph {
 	if d.graph != nil {
 		return d.graph
 	}
-	return dipmap.EmptyGraph{}
+	return godipGraph{g: start.Graph()}
 }
 
 // handleMap processes /map [territory [n]] — renders the board with unit

@@ -10,6 +10,7 @@ import (
 	"github.com/burrbd/dip/events"
 	"github.com/burrbd/dip/session"
 	"github.com/cheekybits/is"
+	"github.com/zond/godip/variants/classical/start"
 )
 
 // ---- mock channel -----------------------------------------------------------
@@ -1868,6 +1869,23 @@ func TestDispatchMap_UsesCustomGraph(t *testing.T) {
 type customTestGraph map[string][]string
 
 func (g customTestGraph) Edges(t string) []string { return g[t] }
+
+// ---- godipGraph -------------------------------------------------------------
+
+func TestGodipGraph_Edges_ReturnsNeighbours(t *testing.T) {
+	is := is.New(t)
+	g := godipGraph{g: start.Graph()}
+	// Vienna (vie) is adjacent to several provinces in the classical variant.
+	edges := g.Edges("vie")
+	is.Equal(len(edges) > 0, true)
+}
+
+func TestGodipGraph_Edges_EmptyForUnknownProvince(t *testing.T) {
+	is := is.New(t)
+	g := godipGraph{g: start.Graph()}
+	edges := g.Edges("nonexistent")
+	is.Equal(len(edges), 0)
+}
 
 // ---- /history additional coverage ------------------------------------------
 

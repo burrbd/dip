@@ -17,7 +17,9 @@
 package bot_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"image/jpeg"
 	"strings"
 	"testing"
 
@@ -640,14 +642,46 @@ func TestCommand_Map_NoArgs(t *testing.T) {
 }
 
 func TestCommand_Map_WithTerritoryAndRadius(t *testing.T) {
-	// /map Vienna 1 highlights Vienna and its adjacent provinces.
-	is := is.New(t)
+	// /map vie 1 highlights Vienna and its adjacent provinces (zoomed).
 	d, ch := startedGame(t)
 
 	_, err := d.Dispatch(chanCmd("map", "anyone", "game", "vie", "1"))
-	is.NoErr(err)
-	is.Equal(len(ch.imgs) > 0, true)
+	if err != nil {
+		t.Fatalf("expected no error for /map vie 1, got: %v", err)
+	}
+	if len(ch.imgs) == 0 {
+		t.Fatal("expected JPEG image to be posted for /map vie 1")
+	}
 	t.Logf("Map with territory: JPEG %d KB", len(ch.imgs[0])/1024)
+
+	// Sub-test: /map vie 3 produces a different (larger bounding box) image
+	// than /map vie 1, proving the radius argument is forwarded correctly.
+	t.Run("radius3_differs_from_radius1", func(t *testing.T) {
+		is := is.New(t)
+
+		ch.imgs = nil
+		_, err := d.Dispatch(chanCmd("map", "anyone", "game", "vie", "1"))
+		is.NoErr(err)
+		is.Equal(len(ch.imgs) == 1, true)
+		img1, err := jpeg.Decode(bytes.NewReader(ch.imgs[0]))
+		is.NoErr(err)
+
+		ch.imgs = nil
+		_, err = d.Dispatch(chanCmd("map", "anyone", "game", "vie", "3"))
+		is.NoErr(err)
+		is.Equal(len(ch.imgs) == 1, true)
+		img3, err := jpeg.Decode(bytes.NewReader(ch.imgs[0]))
+		is.NoErr(err)
+
+		// Both renders are 800px wide. The height encodes the aspect ratio of
+		// the bounding box. A radius-3 neighbourhood covers a larger map area
+		// than radius-1, so the aspect ratio (and thus the height) must differ.
+		b1, b3 := img1.Bounds(), img3.Bounds()
+		if b1.Dy() == b3.Dy() {
+			t.Errorf("expected different heights for radius 1 vs 3, got %d for both", b1.Dy())
+		}
+		t.Logf("radius 1: %dx%d, radius 3: %dx%d", b1.Dx(), b1.Dy(), b3.Dx(), b3.Dy())
+	})
 }
 
 func TestCommand_Help_NoArgs(t *testing.T) {

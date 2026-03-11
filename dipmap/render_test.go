@@ -6,6 +6,7 @@ import (
 	"image"
 	"image/jpeg"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/cheekybits/is"
@@ -365,6 +366,18 @@ func TestPrepareForRender_DisplayNoneBecomesOpacityZero(t *testing.T) {
 	}
 }
 
+func TestPrepareForRender_DisplayNoneAttributeBecomesOpacityZero(t *testing.T) {
+	// Standalone display="none" attribute (not inline style) must also become opacity:0.
+	svg := []byte(`<g id="unit-vie-army" display="none">content</g>`)
+	result := prepareForRender(svg)
+	if bytes.Contains(result, []byte(`display="none"`)) {
+		t.Error(`expected display="none" attribute to be replaced`)
+	}
+	if !bytes.Contains(result, []byte("opacity:0")) {
+		t.Error("expected opacity:0 after replacing display=none attribute")
+	}
+}
+
 func TestPrepareForRender_DisplayInlineUnchanged(t *testing.T) {
 	svg := []byte(`<g style="display:inline">`)
 	result := prepareForRender(svg)
@@ -378,6 +391,57 @@ func TestPrepareForRender_NoDisplay_Unchanged(t *testing.T) {
 	result := prepareForRender(svg)
 	if string(result) != `<g style="fill:red">` {
 		t.Errorf("unexpected change: %s", result)
+	}
+}
+
+// ---- rewriteTextStyles ------------------------------------------------------
+
+func TestRewriteTextStyles_StripsUnsupportedProperties(t *testing.T) {
+	is := is.New(t)
+	// A <text> element with a font-family and other unsupported properties.
+	svg := []byte(`<svg><text style="font-family:LibreBaskerville-Bold;font-size:12px;fill:#000">Wien</text></svg>`)
+	result := rewriteTextStyles(svg, 0)
+	s := string(result)
+	if strings.Contains(s, "font-family") {
+		t.Error("expected font-family to be stripped from text style")
+	}
+	if !strings.Contains(s, "font-size") {
+		t.Error("expected font-size to be retained in text style")
+	}
+	is.NotNil(result)
+}
+
+func TestRewriteTextStyles_NoStyleAttribute_Unchanged(t *testing.T) {
+	// <text> without a style attribute must not be modified.
+	svg := []byte(`<svg><text x="10" y="20">Paris</text></svg>`)
+	result := rewriteTextStyles(svg, naturalWidth)
+	if !bytes.Equal(result, svg) {
+		t.Errorf("expected unchanged SVG, got %q", result)
+	}
+}
+
+func TestRewriteTextStyles_ScalesByCanvasWidth(t *testing.T) {
+	// At naturalWidth the base font size is 16. At half width it should be 8.
+	svg := []byte(`<text style="font-family:X;font-size:12px">A</text>`)
+	full := rewriteTextStyles(svg, naturalWidth)
+	half := rewriteTextStyles(svg, naturalWidth/2)
+	if bytes.Equal(full, half) {
+		t.Error("expected different font sizes for different canvas widths")
+	}
+	if !bytes.Contains(full, []byte("font-size:16px")) {
+		t.Errorf("expected 16px at naturalWidth, got %q", full)
+	}
+	if !bytes.Contains(half, []byte("font-size:8px")) {
+		t.Errorf("expected 8px at half width, got %q", half)
+	}
+}
+
+func TestRewriteTextStyles_NonTextElement_Unchanged(t *testing.T) {
+	// style= attributes on non-<text> elements must not be altered.
+	svg := []byte(`<rect style="font-family:X;fill:red"/>`)
+	result := rewriteTextStyles(svg, naturalWidth)
+	if !bytes.Equal(result, svg) {
+		t.Errorf("expected rect element unchanged, got %q", result)
 	}
 }
 

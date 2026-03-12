@@ -623,21 +623,22 @@ func TestCommand_History_BeforeFirstResolution(t *testing.T) {
 }
 
 func TestCommand_Map_NoArgs(t *testing.T) {
-	// /map with no arguments posts the full board JPEG to the channel.
+	// /map with no arguments posts the full board PNG to the channel.
 	is := is.New(t)
 	d, ch := startedGame(t)
 
 	_, err := d.Dispatch(chanCmd("map", "anyone", "game"))
 	is.NoErr(err)
-	// JPEG must have been posted (PostImage called).
+	// PNG must have been posted (PostImage called).
 	is.Equal(len(ch.imgs) > 0, true)
-	// First three bytes must be the JPEG magic number (FF D8 FF).
+	// First four bytes must be the PNG magic number (\x89PNG).
 	if len(ch.imgs) > 0 {
 		img := ch.imgs[0]
-		is.Equal(img[0], byte(0xFF))
-		is.Equal(img[1], byte(0xD8))
-		is.Equal(img[2], byte(0xFF))
-		t.Logf("JPEG posted: %d KB", len(img)/1024)
+		is.Equal(img[0], byte(0x89))
+		is.Equal(img[1], byte('P'))
+		is.Equal(img[2], byte('N'))
+		is.Equal(img[3], byte('G'))
+		t.Logf("PNG posted: %d KB", len(img)/1024)
 	}
 }
 

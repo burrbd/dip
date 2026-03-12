@@ -53,7 +53,7 @@ type Dispatcher struct {
 	sessions       map[string]*session.Session
 	svgFn          func(dipmap.EngineState) ([]byte, error)                   // defaults to dipmap.LoadSVG (raw SVG bytes)
 	overlayFn      func([]byte, map[string]dipmap.Unit) ([]byte, error)       // defaults to dipmap.Overlay (unit glyphs)
-	imgFn          func([]byte) ([]byte, error)                               // defaults to dipmap.SVGToJPEG (full-board JPEG)
+	imgFn          func([]byte) ([]byte, error)                               // defaults to dipmap.SVGToPNG (full-board PNG)
 	highlightFn    func([]byte, []string) ([]byte, error)                     // retained for Story 10c (zoomed /map with territory+radius)
 	renderZoomedFn func(dipmap.EngineState, []byte, []string) ([]byte, error) // retained for Story 10c (zoomed /map with territory+radius)
 }
@@ -68,7 +68,7 @@ func New(ch events.Channel, notifier session.Notifier, loader session.EngineLoad
 		sessions:       make(map[string]*session.Session),
 		svgFn:          dipmap.LoadSVG,
 		overlayFn:      dipmap.Overlay,
-		imgFn:          dipmap.SVGToJPEG,
+		imgFn:          dipmap.SVGToPNG,
 		highlightFn:    dipmap.Highlight,
 		renderZoomedFn: dipmap.RenderZoomed,
 	}
@@ -704,8 +704,8 @@ func (d *Dispatcher) handleHistory(cmd Command) (string, error) {
 // Pipeline (both paths):
 //  1. svgFn   — load raw SVG asset
 //  2. overlayFn — inject army/fleet glyphs at province centroids
-//  3a. Full board: imgFn — rasterise to JPEG
-//  3b. Zoomed:    highlightFn → renderZoomedFn — highlight + crop → JPEG
+//  3a. Full board: imgFn — rasterise to PNG
+//  3b. Zoomed:    highlightFn → renderZoomedFn — highlight + crop → PNG
 func (d *Dispatcher) handleMap(cmd Command) (string, error) {
 	sess, ok := d.sessions[cmd.ChannelID]
 	if !ok || sess == nil {

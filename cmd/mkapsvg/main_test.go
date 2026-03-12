@@ -591,3 +591,101 @@ func TestGenerateSVG_NoImpassableStripes(t *testing.T) {
 		t.Error("expected impassableStripes url() reference to be replaced in generated SVG")
 	}
 }
+
+// ---- flattenTextTspan -------------------------------------------------------
+
+func TestFlattenTextTspan_FlattensSimpleCase(t *testing.T) {
+	svg := `<text transform="rotate(-8)" id="Paris" x="-10" y="-20">` +
+		`<tspan x="400" y="500">Paris</tspan></text>`
+	result := flattenTextTspan(svg)
+	if strings.Contains(result, "<tspan") {
+		t.Error("expected <tspan> to be removed")
+	}
+	if !strings.Contains(result, `x="400"`) || !strings.Contains(result, `y="500"`) {
+		t.Errorf("expected tspan coordinates in result, got: %s", result)
+	}
+	if !strings.Contains(result, `transform="rotate(-8)"`) {
+		t.Error("expected transform from <text> to be preserved")
+	}
+	if !strings.Contains(result, ">Paris<") {
+		t.Error("expected text content to be preserved")
+	}
+}
+
+func TestFlattenTextTspan_MultilineAttributes(t *testing.T) {
+	// tspan opening tag spans multiple lines (as Inkscape emits it).
+	svg := "<text id=\"foo\" x=\"-89\" y=\"79\"><tspan\n   id=\"ts1\"\n   y=\"1059\"\n   x=\"287\">Berlin</tspan></text>"
+	result := flattenTextTspan(svg)
+	if strings.Contains(result, "<tspan") {
+		t.Error("expected <tspan> to be removed")
+	}
+	if !strings.Contains(result, `x="287"`) || !strings.Contains(result, `y="1059"`) {
+		t.Errorf("expected tspan coordinates used, got: %s", result)
+	}
+	if !strings.Contains(result, "Berlin") {
+		t.Error("expected text content preserved")
+	}
+}
+
+func TestFlattenTextTspan_NoTspan_ReturnsUnchanged(t *testing.T) {
+	// Text element with direct content (no tspan) — must be left alone.
+	svg := `<text x="10" y="20">London</text>`
+	result := flattenTextTspan(svg)
+	if result != svg {
+		t.Errorf("expected unchanged, got: %s", result)
+	}
+}
+
+func TestFlattenTextTspan_MultipleTspans_JoinsContent(t *testing.T) {
+	// Two-tspan label like "ENGLISH CHANNEL" — text joined, first tspan coords used.
+	svg := `<text transform="rotate(-3)" id="EC" x="10" y="38">` +
+		`<tspan x="222" y="781">ENGLISH</tspan>` +
+		`<tspan x="232" y="801">CHANNEL</tspan></text>`
+	result := flattenTextTspan(svg)
+	if strings.Contains(result, "<tspan") {
+		t.Error("expected all tspan elements removed")
+	}
+	if !strings.Contains(result, "ENGLISH CHANNEL") {
+		t.Errorf("expected joined text, got: %s", result)
+	}
+	if !strings.Contains(result, `x="222"`) || !strings.Contains(result, `y="781"`) {
+		t.Errorf("expected first tspan coords, got: %s", result)
+	}
+}
+
+func TestFlattenTextTspan_TspanMissingCoords_ReturnsUnchanged(t *testing.T) {
+	// tspan has no x/y — cannot determine text position, leave as is.
+	svg := `<text x="10" y="20"><tspan id="ts">Moscow</tspan></text>`
+	result := flattenTextTspan(svg)
+	if result != svg {
+		t.Errorf("expected unchanged when tspan has no x/y, got: %s", result)
+	}
+}
+
+func TestFlattenTextTspan_TextWithoutXY_InsertsFromTspan(t *testing.T) {
+	// <text> has no x/y — the else branches insert them from the first tspan.
+	svg := `<text transform="rotate(-5)" id="vie"><tspan x="600" y="700">Vienna</tspan></text>`
+	result := flattenTextTspan(svg)
+	if strings.Contains(result, "<tspan") {
+		t.Error("expected <tspan> to be removed")
+	}
+	if !strings.Contains(result, `x="600"`) || !strings.Contains(result, `y="700"`) {
+		t.Errorf("expected tspan coordinates inserted, got: %s", result)
+	}
+	if !strings.Contains(result, "Vienna") {
+		t.Error("expected text content preserved")
+	}
+}
+
+func TestFlattenTextTspan_GeneratedSVGHasNoTspan(t *testing.T) {
+	is := is.New(t)
+	raw, err := classical.Asset("svg/map.svg")
+	is.NoErr(err)
+
+	svg, _, _, err := generateSVG(raw)
+	is.NoErr(err)
+
+	if strings.Contains(svg, "<tspan") {
+		t.Error("expected no <tspan> elements in generated SVG after flattening")
+	}
+}

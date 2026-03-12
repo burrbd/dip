@@ -184,7 +184,72 @@ func fixImpassableFill(svg string) string {
 	return svg
 }
 
-// fixSVGDimensions replaces percentage width/height on the SVG root element
+// flattenTextTspan converts SVG text elements that wrap their content in
+// <tspan> children into flat <text> elements. tdewolff/canvas only renders
+// text that is a direct text-node child of <text>; text inside <tspan> is
+// silently skipped. Inkscape always emits <tspan>, so province label text is
+// never rendered without this preprocessing step.
+//
+// The x and y coordinates of the first <tspan> replace those of the <text>
+// element because Inkscape stores the actual text position on the <tspan>
+// (the <text> coordinates are in the pre-rotation coordinate space). When
+// a label spans multiple <tspan> elements (e.g. "ENGLISH CHANNEL" on two
+// lines), their text content is joined with a space into a single line.
+// All other <text> attributes (transform, id, style, font-family, etc.) are
+// kept unchanged.
+func flattenTextTspan(svg string) string {
+	// Outer regex matches a whole <text ...>…</text> block that contains tspans.
+	outerRe := regexp.MustCompile(`(?s)<text\b([^>]*)>((?:\s*<tspan\b[^>]*>[^<]*</tspan>)+)\s*</text>`)
+	// tspanRe extracts individual tspan attrs and content.
+	tspanRe := regexp.MustCompile(`(?s)<tspan\b([^>]*)>([^<]*)</tspan>`)
+	xRe := regexp.MustCompile(`\bx="([^"]+)"`)
+	yRe := regexp.MustCompile(`\by="([^"]+)"`)
+
+	return outerRe.ReplaceAllStringFunc(svg, func(match string) string {
+		sub := outerRe.FindStringSubmatch(match)
+		textAttrs := sub[1]
+		tspanBlock := sub[2]
+
+		// Collect all tspan content; use first tspan's x/y as position.
+		var firstX, firstY string
+		var parts []string
+		for _, ts := range tspanRe.FindAllStringSubmatch(tspanBlock, -1) {
+			tspanAttrs := ts[1]
+			content := strings.TrimSpace(ts[2])
+			if content != "" {
+				parts = append(parts, content)
+			}
+			if firstX == "" {
+				if m := xRe.FindStringSubmatch(tspanAttrs); m != nil {
+					firstX = m[1]
+				}
+			}
+			if firstY == "" {
+				if m := yRe.FindStringSubmatch(tspanAttrs); m != nil {
+					firstY = m[1]
+				}
+			}
+		}
+		if firstX == "" || firstY == "" || len(parts) == 0 {
+			return match
+		}
+
+		// Apply tspan coordinates to the text element.
+		if xRe.MatchString(textAttrs) {
+			textAttrs = xRe.ReplaceAllString(textAttrs, `x="`+firstX+`"`)
+		} else {
+			textAttrs += ` x="` + firstX + `"`
+		}
+		if yRe.MatchString(textAttrs) {
+			textAttrs = yRe.ReplaceAllString(textAttrs, `y="`+firstY+`"`)
+		} else {
+			textAttrs += ` y="` + firstY + `"`
+		}
+		return `<text` + textAttrs + `>` + strings.Join(parts, " ") + `</text>`
+	})
+}
+
+
 // with the numeric values from its viewBox. tdewolff/canvas resolves a
 // percentage width/height against a 1 mm parent, producing a 1×1 px output.
 // Using explicit pixel values gives a full-resolution raster image.
@@ -206,6 +271,7 @@ func generateSVG(raw []byte) (svg string, fleets, armies int, err error) {
 	svg = stripInkscape(string(raw))
 	svg = fixSVGDimensions(svg)
 	svg = fixImpassableFill(svg)
+	svg = flattenTextTspan(svg)
 
 	// Parse province centre coordinates before stripping the province-centers
 	// group — the *Center path elements live inside that group.

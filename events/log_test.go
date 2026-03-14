@@ -154,7 +154,7 @@ func TestRoundTrip_AllEventTypes(t *testing.T) {
 
 	payloads := []struct {
 		typ     events.EventType
-		payload any
+		payload interface{}
 	}{
 		{events.TypeGameCreated, events.GameCreated{Variant: "classical", DeadlineHours: 48, GMUserID: "gm1"}},
 		{events.TypePlayerJoined, events.PlayerJoined{UserID: "u2", Nation: "France"}},

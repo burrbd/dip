@@ -28,6 +28,9 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 10b — Map Rendering Fixes: Labels, Unit Colours, and Glyph Geometry
 - [ ] Story 10c — Zoomed /map with Territory and Radius (deferred)
 - [x] Story 10d — Replace oksvg with tdewolff/canvas for proper text rendering
+- [ ] Story 14 — Adjudication Order Summary
+- [ ] Story 15 — Order Submission Acknowledgement
+- [ ] Story 16 — Phase Transition Guidance
 - [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)
@@ -626,6 +629,245 @@ SVGToPNG(svg)              tdewolff/canvas parses SVG, loads
   `SVGToPNG`, and asserts the output is a valid non-empty PNG. The test does not
   assert pixel colours (font rendering is deterministic but platform-dependent);
   asserting magic bytes and minimum file size (> 50 KB) is sufficient.
+
+---
+
+### Story 14 — Adjudication Order Summary
+
+**Goal:** After each phase is resolved, post a human-readable text message to the game
+channel that lists every order grouped by nation alongside its outcome, so players can
+immediately see what happened without parsing raw JSON. Nations that submitted no orders
+are explicitly flagged as NMR.
+
+**Files:** `engine/adapter.go`, `session/lifecycle.go`, `bot/commands.go`,
+`bot/commands_test.go`, `bot/bot_functional_test.go`
+
+---
+
+#### Data model change — add Nation to OrderResult
+
+`OrderResult` (in `engine/adapter.go`) currently has `Province`, `Order`, and `Success`
+but no `Nation` field. The adjudication summary requires knowing which nation each order
+belongs to. Add `Nation string` to `OrderResult` and populate it in `engine.Resolve()` by
+reading `Units()[province].Nation` from the pre-resolution state snapshot (before `Next()`
+is called), so that the nation is captured at the point the order was staged, not after units
+may have moved.
+
+#### Message format
+
+After adjudication `session.AdvanceTurn()` posts a plain-text channel message in the
+following form:
+
+```
+Spring 1901 Movement — orders resolved:
+
+England:
+  F Lon - NTH: success
+  A Lvp H: success
+
+France:
+  A Par - Bur: bounced
+  A Mar - Bur: bounced
+
+Russia: no orders submitted (hold applied to all units)
+```
+
+Rules:
+- Nations are listed in a consistent order (alphabetical by nation name).
+- Each order line uses the canonical godip notation (the text that `DATCOrder` parsed,
+  not the raw user input).
+- Outcome is one of: `success`, `bounced`, `dislodged`, or `failed` (for support/convoy
+  orders that were cut or did not contribute).
+- For NMR nations, list the auto-applied hold orders individually rather than just the
+  summary line, so players can see exactly what holds were applied:
+  ```
+  Russia: no orders submitted
+    A Mos H: hold (auto)
+    A War H: hold (auto)
+    F Sev H: hold (auto)
+  ```
+- The message is a plain `Post` to the channel, not a new event type.
+
+#### Acceptance criteria
+
+- `OrderResult` has a `Nation string` field populated during `Resolve()`.
+- After `AdvanceTurn()`, a plain-text channel message matching the format above is posted.
+- Nations with no staged orders appear with the NMR annotation and their auto-hold orders listed.
+- Nations are listed in alphabetical order.
+- Unit tests cover `Nation` population in `OrderResult` for both submitted and NMR orders.
+- `TestCommand_Resolve` (or a new `TestAdvanceTurn_OrderSummary`) in
+  `bot/bot_functional_test.go` asserts that the channel message contains each nation name
+  and at least one order line.
+- `go test -v -cover -race ./...` passes at 100% for `engine/`, `session/`, and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
+
+---
+
+### Story 15 — Order Submission Acknowledgement
+
+**Goal:** When a player submits an order, give them private confirmation via DM and post a
+running count to the public channel so everyone can track progress without revealing who has
+submitted.
+
+**Files:** `bot/commands.go`, `bot/commands_test.go`, `bot/bot_functional_test.go`
+
+---
+
+#### Behaviour
+
+**On every `/order` submission (movement phase only):**
+
+1. **DM to the submitting player:**
+   ```
+   Order received: A Vie-Bud. Still waiting on 4 other nations.
+   ```
+   If they are the last nation:
+   ```
+   Order received: A Vie-Bud. All nations have submitted — adjudicating now.
+   ```
+
+2. **Public channel message:**
+   ```
+   3 of 7 nations have submitted orders.
+   ```
+   Posted on every submission, including the final one (immediately before adjudication
+   fires).
+
+The count in the channel message reflects the state _after_ the current submission is
+recorded. The DM is sent before the channel post.
+
+Nation identity is not revealed in the channel message. The DM confirms the specific order
+text back to the player (using canonical godip form).
+
+**Retreat and adjustment phases** are excluded from this story — those phases use a
+different submission model (`/retreat`, `/build`, `/disband`) and will be addressed in
+Story 16 if needed.
+
+#### Implementation notes
+
+- The count of submitted nations comes from `len(sess.StagedOrders)` (already maintained
+  per movement phase).
+- The total expected nations comes from `len(sess.Nations)`.
+- The channel post is a plain `Post`; the player confirmation is a `SendDM` to the
+  submitting user's ID.
+- The existing `/order` handler returns a string response; extend it to also call
+  `ch.Post(channelID, countMsg)` and `ch.SendDM(userID, confirmMsg)` after a successful
+  `SubmitOrder`.
+
+#### Acceptance criteria
+
+- After a successful `/order`, the submitting player receives a DM containing the canonical
+  order text and the number of remaining nations.
+- The channel receives a message of the form `"N of M nations have submitted orders."` on
+  every submission.
+- When the last nation submits, the DM says "All nations have submitted" and the channel
+  message is posted before adjudication fires.
+- An invalid order (rejected by the engine) produces neither a DM nor a channel post.
+- `TestCommand_Order` in `bot/bot_functional_test.go` asserts both the DM and the channel
+  message content after a successful submission.
+- `go test -v -cover -race ./...` passes at 100% for `bot/`.
+- `go test -v -tags functional ./bot/` passes.
+
+---
+
+### Story 16 — Phase Transition Guidance
+
+**Goal:** After adjudication, post a plain-text channel message announcing the new phase
+and telling every nation exactly what they need to do — including valid retreat destinations
+for dislodged units and available home supply centres for builds. Nations with nothing to do
+are explicitly listed so no player is left wondering.
+
+**Files:** `session/lifecycle.go`, `engine/adapter.go`, `bot/commands_test.go`,
+`bot/bot_functional_test.go`
+
+---
+
+#### Message format by phase type
+
+**Movement phase:**
+```
+Autumn 1901 Movement — submit orders for your units.
+
+England: A Lon, F NTH, A Yor
+France: A Par, A Mar, F Bre
+Germany: A Ber, A Mun, F Kie
+Russia: nothing to do this phase
+```
+(Russia having no units is an edge case but the pattern holds.)
+
+**Retreat phase:**
+```
+Spring 1901 Retreat — the following units must retreat or disband:
+
+England:
+  A Bud: retreat to Gal, Vie, or Rum — or disband
+
+France: nothing to do this phase
+Germany: nothing to do this phase
+...
+```
+
+**Adjustment phase:**
+```
+Winter 1901 Adjustment:
+
+England: build 2 units — available home centres: Lon, Edi, Lvp
+France: disband 1 unit
+Russia: nothing to do this phase
+...
+```
+
+Rules:
+- All nations are listed in alphabetical order regardless of phase.
+- Nations with nothing to do receive the literal line `nothing to do this phase`.
+- For retreat: valid destinations are queried from godip's `Dislodgeds()` and the
+  `(*state.State).Retreat` call or equivalent. If a unit has no valid retreat
+  destinations, say `must disband (no valid retreats)`.
+- For adjustment builds: available home supply centres are those home SCs currently
+  owned by the nation and occupied by no unit.
+- The message is posted by `session.AdvanceTurn()` immediately after the Story 14
+  order summary, as a separate `Post` call.
+
+#### Engine interface additions
+
+Two new methods are needed on the `gameState` interface (and implemented on `stateWrapper`):
+
+```go
+// ValidRetreats returns a map from dislodged province to slice of valid retreat
+// destination provinces. An empty slice means the unit must disband.
+ValidRetreats() map[godip.Province][]godip.Province
+
+// BuildOptions returns, for each nation, the number of units to build (positive)
+// or disband (negative) and the list of available home SC provinces for builds.
+BuildOptions() map[godip.Nation]BuildOption
+```
+
+```go
+type BuildOption struct {
+    Delta            int               // positive = builds needed, negative = disbands needed
+    AvailableHomes   []godip.Province  // only populated when Delta > 0
+}
+```
+
+These methods are added to the `gameState` interface in `engine/adapter.go` and implemented
+on `stateWrapper`. Mock implementations are added to test files as needed.
+
+#### Acceptance criteria
+
+- After every phase resolution, a phase guidance message is posted to the channel.
+- Movement phase message lists each nation's current units.
+- Retreat phase message lists dislodged units with valid retreat destinations (or "must
+  disband" if none).
+- Adjustment phase message lists build count + available home SCs (builds) or disband
+  count (disbands) per nation.
+- All nations appear in every message; those with no required action show "nothing to do
+  this phase".
+- `ValidRetreats()` and `BuildOptions()` are unit-tested on `stateWrapper` against a real
+  godip game state.
+- `TestAdvanceTurn_PhaseGuidance` in `bot/bot_functional_test.go` asserts the channel
+  contains the phase guidance message after resolution.
+- `go test -v -cover -race ./...` passes at 100% for `engine/`, `session/`, and `bot/`.
+- `go test -v -tags functional ./bot/` passes.
 
 ---
 

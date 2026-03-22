@@ -348,6 +348,21 @@ func (d *Dispatcher) handleOrder(cmd Command) (string, error) {
 		return "", fmt.Errorf("bot: invalid order: %w", err)
 	}
 	sess.StagedOrders[nation] = append(sess.StagedOrders[nation], orderText)
+
+	// Story 15: send DM acknowledgement and post running count to channel.
+	total := len(sess.Players)
+	submitted := len(sess.StagedOrders)
+	remaining := total - submitted
+	var dmMsg string
+	if remaining <= 0 {
+		dmMsg = fmt.Sprintf("Order received: %s. All nations have submitted — adjudicating now.", orderText)
+	} else {
+		dmMsg = fmt.Sprintf("Order received: %s. Still waiting on %d other nation(s).", orderText, remaining)
+	}
+	_ = d.ch.SendDM(cmd.UserID, dmMsg)
+	countMsg := fmt.Sprintf("%d of %d nations have submitted orders.", submitted, total)
+	_ = d.ch.Post(cmd.GameChannelID, countMsg)
+
 	return fmt.Sprintf("Order staged: %s", orderText), nil
 }
 

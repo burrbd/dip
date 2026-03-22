@@ -99,6 +99,10 @@ func (e *mockEngine) Phase() string                             { return e.phase
 func (e *mockEngine) Dislodgeds() map[string]string             { return make(map[string]string) }
 func (e *mockEngine) SupplyCenters() map[string]int             { return make(map[string]int) }
 func (e *mockEngine) Units() map[string]engine.UnitInfo         { return make(map[string]engine.UnitInfo) }
+func (e *mockEngine) ValidRetreats() map[string][]string        { return make(map[string][]string) }
+func (e *mockEngine) BuildOptions() map[string]engine.BuildOption {
+	return make(map[string]engine.BuildOption)
+}
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -376,7 +380,8 @@ func TestAdvanceTurn_PostsPhaseResolved(t *testing.T) {
 	s.CancelDeadline()
 
 	is.NoErr(err)
-	is.Equal(ch.msgCount(), 1)
+	// PhaseResolved event + order summary + phase guidance = 3 channel posts.
+	is.Equal(ch.msgCount(), 3)
 
 	var env events.Envelope
 	is.NoErr(json.Unmarshal([]byte(ch.msgAt(0)), &env))
@@ -487,10 +492,10 @@ func TestAdvanceTurn_DetectsSoloWinner_PostsGameEnded(t *testing.T) {
 
 	is.NoErr(s.AdvanceTurn())
 
-	// Two messages: PhaseResolved then GameEnded.
-	is.Equal(ch.msgCount(), 2)
+	// Three messages: PhaseResolved event, order summary, GameEnded.
+	is.Equal(ch.msgCount(), 3)
 	var env events.Envelope
-	is.NoErr(json.Unmarshal([]byte(ch.msgAt(1)), &env))
+	is.NoErr(json.Unmarshal([]byte(ch.msgAt(2)), &env))
 	is.Equal(env.Type, events.TypeGameEnded)
 
 	var ge events.GameEnded
@@ -648,7 +653,8 @@ func TestOnDeadline_CallsAdvanceTurn(t *testing.T) {
 	s.onDeadline()
 	s.CancelDeadline()
 
-	is.Equal(ch.msgCount(), 1) // PhaseResolved was posted
+	// PhaseResolved event + order summary + phase guidance = 3 channel posts.
+	is.Equal(ch.msgCount(), 3)
 }
 
 // ---- RestartDeadline tests --------------------------------------------------
@@ -806,3 +812,267 @@ func TestExtendDeadline_CancelsExistingTimer(t *testing.T) {
 
 	is.Equal(fired, false)
 }
+
+// ---- lifecycle helper tests -------------------------------------------------
+
+func TestNationList_ReturnsUniqueSorted(t *testing.T) {
+	is := is.New(t)
+	s := &Session{
+		Players: map[string]string{
+			"u1": "England",
+			"u2": "France",
+			"u3": "England", // duplicate nation
+		},
+	}
+	nations := s.nationList()
+	is.Equal(nations, []string{"England", "France"})
+}
+
+func TestNationList_Empty(t *testing.T) {
+	is := is.New(t)
+	s := &Session{Players: map[string]string{}}
+	nations := s.nationList()
+	is.Equal(len(nations), 0)
+}
+
+func TestFormatOrderSummary_AllNMR(t *testing.T) {
+	is := is.New(t)
+	result := engine.ResolutionResult{
+		Phase:  "Spring 1901 Movement",
+		Season: "Spring",
+		Year:   1901,
+		Orders: []engine.OrderResult{
+			{Nation: "England", Order: "A lon H", IsNMR: true},
+		},
+	}
+	out := formatOrderSummary(result, []string{"England"})
+	is.Equal(out != "", true)
+	// Should contain "no orders submitted" for an all-NMR nation.
+	if !containsStr(out, "no orders submitted") {
+		t.Fatalf("expected 'no orders submitted' in %q", out)
+	}
+}
+
+func TestFormatOrderSummary_MixedOrders(t *testing.T) {
+	is := is.New(t)
+	result := engine.ResolutionResult{
+		Phase:  "Spring 1901 Movement",
+		Season: "Spring",
+		Year:   1901,
+		Orders: []engine.OrderResult{
+			{Nation: "England", Order: "A lon-bel", IsNMR: false, Outcome: "success"},
+			{Nation: "England", Order: "F nth H", IsNMR: true, Outcome: ""},
+		},
+	}
+	out := formatOrderSummary(result, []string{"England"})
+	is.Equal(out != "", true)
+	// Should show the real order with outcome and the NMR order as "(auto)".
+	if !containsStr(out, "success") {
+		t.Fatalf("expected 'success' in %q", out)
+	}
+	if !containsStr(out, "(auto)") {
+		t.Fatalf("expected '(auto)' in %q", out)
+	}
+}
+
+func TestFormatOrderSummary_NationWithNoOrders(t *testing.T) {
+	is := is.New(t)
+	result := engine.ResolutionResult{
+		Phase:  "Spring 1901 Movement",
+		Season: "Spring",
+		Year:   1901,
+		Orders: []engine.OrderResult{},
+	}
+	out := formatOrderSummary(result, []string{"England"})
+	// England has no orders at all — should be skipped.
+	is.Equal(out != "", true)
+}
+
+func TestFormatPhaseGuidance_MovementPhase(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngine{phaseStr: "Spring 1901 Movement"}
+	s := &Session{Phase: "Spring 1901 Movement", Eng: eng}
+	out := s.formatPhaseGuidance([]string{"England"})
+	if !containsStr(out, "submit orders") {
+		t.Fatalf("expected 'submit orders' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatPhaseGuidance_RetreatPhase(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngine{phaseStr: "Spring 1901 Retreat"}
+	s := &Session{Phase: "Spring 1901 Retreat", Eng: eng}
+	out := s.formatPhaseGuidance([]string{"England"})
+	if !containsStr(out, "must retreat") {
+		t.Fatalf("expected 'must retreat' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatPhaseGuidance_AdjustmentPhase(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngine{phaseStr: "Fall 1901 Adjustment"}
+	s := &Session{Phase: "Fall 1901 Adjustment", Eng: eng}
+	out := s.formatPhaseGuidance([]string{"England"})
+	is.Equal(out != "", true)
+}
+
+func TestFormatPhaseGuidance_UnknownPhase(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngine{phaseStr: "Some 1901 Unknown"}
+	s := &Session{Phase: "Some 1901 Unknown", Eng: eng}
+	out := s.formatPhaseGuidance([]string{"England"})
+	if !containsStr(out, "new phase begun") {
+		t.Fatalf("expected 'new phase begun' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatMovementGuidance_NationWithUnits(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithUnits{
+		units: map[string]engine.UnitInfo{
+			"lon": {Nation: "England"},
+			"lvp": {Nation: "England"},
+		},
+	}
+	out := formatMovementGuidance("Spring 1901 Movement", eng, []string{"England"})
+	if !containsStr(out, "England") {
+		t.Fatalf("expected 'England' in %q", out)
+	}
+	if !containsStr(out, "lon") {
+		t.Fatalf("expected 'lon' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatMovementGuidance_NationWithNoUnits(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithUnits{units: map[string]engine.UnitInfo{}}
+	out := formatMovementGuidance("Spring 1901 Movement", eng, []string{"England"})
+	if !containsStr(out, "nothing to do") {
+		t.Fatalf("expected 'nothing to do' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatRetreatGuidance_NationWithRetreats(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithRetreats{
+		dislodgeds:    map[string]string{"vie": "Austria"},
+		validRetreats: map[string][]string{"vie": {"bud", "tri"}},
+	}
+	out := formatRetreatGuidance("Spring 1901 Retreat", eng, []string{"Austria"})
+	if !containsStr(out, "Austria") {
+		t.Fatalf("expected 'Austria' in %q", out)
+	}
+	if !containsStr(out, "retreat to") {
+		t.Fatalf("expected 'retreat to' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatRetreatGuidance_UnitMustDisband(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithRetreats{
+		dislodgeds:    map[string]string{"vie": "Austria"},
+		validRetreats: map[string][]string{"vie": {}},
+	}
+	out := formatRetreatGuidance("Spring 1901 Retreat", eng, []string{"Austria"})
+	if !containsStr(out, "must disband") {
+		t.Fatalf("expected 'must disband' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatRetreatGuidance_NationNothingToDo(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithRetreats{
+		dislodgeds:    map[string]string{},
+		validRetreats: map[string][]string{},
+	}
+	out := formatRetreatGuidance("Spring 1901 Retreat", eng, []string{"England"})
+	if !containsStr(out, "nothing to do") {
+		t.Fatalf("expected 'nothing to do' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatAdjustmentGuidance_BuildCase(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithBuild{
+		opts: map[string]engine.BuildOption{
+			"England": {Delta: 1, AvailableHomes: []string{"edi"}},
+		},
+	}
+	out := formatAdjustmentGuidance("Fall 1901 Adjustment", eng, []string{"England"})
+	if !containsStr(out, "build") {
+		t.Fatalf("expected 'build' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatAdjustmentGuidance_DisbandCase(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithBuild{
+		opts: map[string]engine.BuildOption{
+			"France": {Delta: -1},
+		},
+	}
+	out := formatAdjustmentGuidance("Fall 1901 Adjustment", eng, []string{"France"})
+	if !containsStr(out, "disband") {
+		t.Fatalf("expected 'disband' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+func TestFormatAdjustmentGuidance_NothingToDo(t *testing.T) {
+	is := is.New(t)
+	eng := &mockEngineWithBuild{
+		opts: map[string]engine.BuildOption{},
+	}
+	out := formatAdjustmentGuidance("Fall 1901 Adjustment", eng, []string{"England"})
+	if !containsStr(out, "nothing to do") {
+		t.Fatalf("expected 'nothing to do' in %q", out)
+	}
+	is.Equal(out != "", true)
+}
+
+// ---- local mock helpers for lifecycle tests ---------------------------------
+
+func containsStr(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstr(s, substr))
+}
+
+func containsSubstr(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+type mockEngineWithUnits struct {
+	mockEngine
+	units map[string]engine.UnitInfo
+}
+
+func (e *mockEngineWithUnits) Units() map[string]engine.UnitInfo { return e.units }
+
+type mockEngineWithRetreats struct {
+	mockEngine
+	dislodgeds    map[string]string
+	validRetreats map[string][]string
+}
+
+func (e *mockEngineWithRetreats) Dislodgeds() map[string]string   { return e.dislodgeds }
+func (e *mockEngineWithRetreats) ValidRetreats() map[string][]string { return e.validRetreats }
+
+type mockEngineWithBuild struct {
+	mockEngine
+	opts map[string]engine.BuildOption
+}
+
+func (e *mockEngineWithBuild) BuildOptions() map[string]engine.BuildOption { return e.opts }

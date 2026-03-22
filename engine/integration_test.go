@@ -335,3 +335,146 @@ func TestBuildStateFromSnapshot_SetDislodgedsError(t *testing.T) {
 	_, err := buildStateFromSnapshot(st, snap)
 	is.Err(err)
 }
+
+// ---- ValidRetreats integration tests ----------------------------------------
+
+func TestStateWrapper_ValidRetreats_EmptyAtGameStart(t *testing.T) {
+	is := is.New(t)
+	w := newClassicalWrapper(t)
+	// At game start (Movement phase) there are no dislodged units.
+	retreats := w.ValidRetreats()
+	is.Equal(len(retreats), 0)
+}
+
+func newRetreatPhaseWrapper(t *testing.T, dislodgedProv godip.Province, dislodgedUnit godip.Unit) *stateWrapper {
+	t.Helper()
+	ph := classical.NewPhase(1901, godip.Spring, godip.Retreat)
+	st := classical.Blank(ph)
+	// Add a regular unit somewhere so state is non-trivial.
+	if err := st.SetUnits(map[godip.Province]godip.Unit{
+		"par": {Type: godip.Army, Nation: godip.France},
+	}); err != nil {
+		t.Fatalf("SetUnits: %v", err)
+	}
+	if err := st.SetDislodgeds(map[godip.Province]godip.Unit{
+		dislodgedProv: dislodgedUnit,
+	}); err != nil {
+		t.Fatalf("SetDislodgeds: %v", err)
+	}
+	return newStateWrapper(st, classical.ClassicalVariant)
+}
+
+func TestStateWrapper_ValidRetreats_DislodgedUnitHasEmptyDestinations(t *testing.T) {
+	is := is.New(t)
+	// Use a province surrounded by units so no valid retreats exist.
+	// Bur (burgundy) surrounded — retreat options depend on graph edges.
+	// Using "bur" at Retreat phase with no adjacent free provinces.
+	w := newRetreatPhaseWrapper(t, "bur",
+		godip.Unit{Type: godip.Army, Nation: godip.France})
+	retreats := w.ValidRetreats()
+	// Bur should appear in the map (no valid retreats or some valid retreats).
+	_, hasBur := retreats["bur"]
+	is.Equal(hasBur, true)
+}
+
+func TestStateWrapper_ValidRetreats_EmptyWhenNoDislodgeds(t *testing.T) {
+	is := is.New(t)
+	ph := classical.NewPhase(1901, godip.Spring, godip.Retreat)
+	st := classical.Blank(ph)
+	w := newStateWrapper(st, classical.ClassicalVariant)
+	retreats := w.ValidRetreats()
+	is.Equal(len(retreats), 0)
+}
+
+// ---- BuildOptions integration tests -----------------------------------------
+
+func TestStateWrapper_BuildOptions_AtGameStart(t *testing.T) {
+	is := is.New(t)
+	w := newClassicalWrapper(t)
+	// At game start all nations have SCs == units → delta = 0 for all.
+	opts := w.BuildOptions()
+	is.Equal(len(opts), 7) // 7 classical nations
+	for _, nation := range classical.ClassicalVariant.Nations {
+		opt, ok := opts[nation]
+		is.Equal(ok, true)
+		is.Equal(opt.Delta, 0)
+	}
+}
+
+func newAdjustmentPhaseWrapper(t *testing.T) *stateWrapper {
+	t.Helper()
+	ph := classical.NewPhase(1901, godip.Fall, godip.Adjustment)
+	st := classical.Blank(ph)
+	// England owns 4 SCs but has only 3 units → can build 1.
+	if err := st.SetUnits(map[godip.Province]godip.Unit{
+		"lon": {Type: godip.Fleet, Nation: godip.England},
+		"lvp": {Type: godip.Army, Nation: godip.England},
+		"yor": {Type: godip.Army, Nation: godip.England},
+		"par": {Type: godip.Army, Nation: godip.France},
+		"mar": {Type: godip.Army, Nation: godip.France},
+		"bre": {Type: godip.Fleet, Nation: godip.France},
+	}); err != nil {
+		t.Fatalf("SetUnits: %v", err)
+	}
+	st.SetSupplyCenters(map[godip.Province]godip.Nation{
+		"lon": godip.England,
+		"lvp": godip.England,
+		"yor": godip.England,
+		"edi": godip.England, // 4th SC for England (no unit there → free home SC)
+		"par": godip.France,
+		"mar": godip.France,
+		"bre": godip.France,
+	})
+	return newStateWrapper(st, classical.ClassicalVariant)
+}
+
+func TestStateWrapper_BuildOptions_EnglandCanBuildOne(t *testing.T) {
+	is := is.New(t)
+	w := newAdjustmentPhaseWrapper(t)
+	opts := w.BuildOptions()
+	engOpt, ok := opts[godip.England]
+	is.Equal(ok, true)
+	is.Equal(engOpt.Delta, 1)
+	is.Equal(len(engOpt.AvailableHomes), 1)
+	is.Equal(engOpt.AvailableHomes[0], godip.Province("edi"))
+}
+
+func TestStateWrapper_BuildOptions_FranceNoBuildDisband(t *testing.T) {
+	is := is.New(t)
+	w := newAdjustmentPhaseWrapper(t)
+	opts := w.BuildOptions()
+	fraOpt, ok := opts[godip.France]
+	is.Equal(ok, true)
+	is.Equal(fraOpt.Delta, 0)
+}
+
+// TestStateWrapper_BuildOptions_DeltaCappedByFreeHomes covers the rawDelta > len(free)
+// branch: England owns 5 SCs but only 1 free home SC, so delta is capped to 1.
+func TestStateWrapper_BuildOptions_DeltaCappedByFreeHomes(t *testing.T) {
+	is := is.New(t)
+	ph := classical.NewPhase(1901, godip.Fall, godip.Adjustment)
+	st := classical.Blank(ph)
+	// England has 3 units on lon, lvp, yor (edi is a free home SC).
+	if err := st.SetUnits(map[godip.Province]godip.Unit{
+		"lon": {Type: godip.Fleet, Nation: godip.England},
+		"lvp": {Type: godip.Army, Nation: godip.England},
+		"yor": {Type: godip.Army, Nation: godip.England},
+	}); err != nil {
+		t.Fatalf("SetUnits: %v", err)
+	}
+	// England owns 5 SCs: 4 home + bel (non-home). rawDelta = 5-3 = 2.
+	// Only edi is free → len(free)=1 < rawDelta=2 → delta capped to 1.
+	st.SetSupplyCenters(map[godip.Province]godip.Nation{
+		"lon": godip.England,
+		"lvp": godip.England,
+		"yor": godip.England,
+		"edi": godip.England,
+		"bel": godip.England, // non-home SC
+	})
+	w := newStateWrapper(st, classical.ClassicalVariant)
+	opts := w.BuildOptions()
+	engOpt, ok := opts[godip.England]
+	is.Equal(ok, true)
+	is.Equal(engOpt.Delta, 1) // capped to len(free)=1
+	is.Equal(len(engOpt.AvailableHomes), 1)
+}

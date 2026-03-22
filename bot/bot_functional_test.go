@@ -946,3 +946,83 @@ func TestCommand_Replace(t *testing.T) {
 	is.NotNil(err)
 	t.Logf("Replace England→newplayer: ok; non-GM rejected (%v)", err)
 }
+
+// ---------------------------------------------------------------------------
+// Story 15 — Order Submission Acknowledgement
+// ---------------------------------------------------------------------------
+
+func TestCommand_Order_Story15_DMAndChannelCount(t *testing.T) {
+	// /order must send a DM acknowledgement to the submitting player and
+	// post a "N of M nations" count message to the game channel.
+	is := is.New(t)
+	d, ch := startedGame(t) // 2 players: u1→England, u2→France
+
+	resp, err := d.Dispatch(dmCmd("order", "u1", "game", "A Lon H"))
+	is.NoErr(err)
+	is.Equal(resp != "", true)
+
+	// DM to u1 must mention the order text and waiting count.
+	found := false
+	for _, dm := range ch.dms["u1"] {
+		if strings.Contains(dm, "Order received") {
+			found = true
+			t.Logf("DM ack: %q", dm)
+		}
+	}
+	is.Equal(found, true)
+
+	// Channel must have a "N of M nations have submitted orders" message.
+	foundCount := false
+	for _, msg := range ch.msgs["game"] {
+		if strings.Contains(msg, "nations have submitted orders") {
+			foundCount = true
+			t.Logf("Channel count: %q", msg)
+		}
+	}
+	is.Equal(foundCount, true)
+}
+
+// ---------------------------------------------------------------------------
+// Story 14 — Adjudication Order Summary
+// Story 16 — Phase Transition Guidance
+// ---------------------------------------------------------------------------
+
+func TestAdvanceTurn_PostsOrderSummaryAndPhaseGuidance(t *testing.T) {
+	// After all players submit, AdvanceTurn must post:
+	//   1. PhaseResolved event (JSON)
+	//   2. Human-readable order summary (plain text, Story 14)
+	//   3. Phase guidance for the new phase (plain text, Story 16)
+	is := is.New(t)
+	d, ch := startedGame(t) // 2 players: u1→England, u2→France
+
+	mustDispatch(t, d, dmCmd("order", "u1", "game", "A Lon H"))
+	mustDispatch(t, d, dmCmd("submit", "u1", "game"))
+	mustDispatch(t, d, dmCmd("order", "u2", "game", "A Par H"))
+	mustDispatch(t, d, dmCmd("submit", "u2", "game"))
+
+	// PhaseResolved event must be present.
+	is.Equal(hasEvent(t, ch, "game", events.TypePhaseResolved), true)
+
+	// Find the order summary — a plain-text message containing "orders resolved".
+	foundSummary := false
+	for _, msg := range ch.msgs["game"] {
+		if strings.Contains(msg, "orders resolved") {
+			foundSummary = true
+			t.Logf("Order summary: %q", msg)
+		}
+	}
+	is.Equal(foundSummary, true)
+
+	// Find the phase guidance — a plain-text message (not JSON).
+	foundGuidance := false
+	for _, msg := range ch.msgs["game"] {
+		// Guidance messages contain "submit orders" (Movement) or
+		// "must retreat" (Retreat) or a phase name with ":".
+		if (strings.Contains(msg, "submit orders") || strings.Contains(msg, "must retreat") || strings.Contains(msg, "nothing to do")) &&
+			!strings.HasPrefix(msg, "{") {
+			foundGuidance = true
+			t.Logf("Phase guidance: %q", msg)
+		}
+	}
+	is.Equal(foundGuidance, true)
+}

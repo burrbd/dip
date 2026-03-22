@@ -13,18 +13,20 @@ import (
 // ---- mock game state --------------------------------------------------------
 
 type mockAdj struct {
-	phase         gamePhase
-	orders        map[godip.Province]adjOrder
-	units         map[godip.Province]godip.Unit
-	dislodgeds    map[godip.Province]godip.Unit
-	supplyCenters map[godip.Province]godip.Nation
-	winner        godip.Nation
-	nextAdj       gameState
-	nextErr       error
-	resolveErr    map[godip.Province]error
-	setOrders     map[godip.Province]adjOrder
-	dumpData      []byte
-	dumpErr       error
+	phase            gamePhase
+	orders           map[godip.Province]adjOrder
+	units            map[godip.Province]godip.Unit
+	dislodgeds       map[godip.Province]godip.Unit
+	supplyCenters    map[godip.Province]godip.Nation
+	winner           godip.Nation
+	nextAdj          gameState
+	nextErr          error
+	resolveErr       map[godip.Province]error
+	setOrders        map[godip.Province]adjOrder
+	dumpData         []byte
+	dumpErr          error
+	validRetreats    map[godip.Province][]godip.Province
+	buildOptionsData map[godip.Nation]internalBuildOption
 }
 
 func newMockAdj() *mockAdj {
@@ -35,9 +37,16 @@ func newMockAdj() *mockAdj {
 	}
 }
 
-func (m *mockAdj) Phase() gamePhase                            { return m.phase }
-func (m *mockAdj) Orders() map[godip.Province]adjOrder         { return m.orders }
-func (m *mockAdj) Units() map[godip.Province]godip.Unit        { return m.units }
+func (m *mockAdj) Phase() gamePhase { return m.phase }
+func (m *mockAdj) Orders() map[godip.Province]adjOrder {
+	// Return a copy so snapshots taken before fillNMR are unaffected.
+	cp := make(map[godip.Province]adjOrder, len(m.orders))
+	for k, v := range m.orders {
+		cp[k] = v
+	}
+	return cp
+}
+func (m *mockAdj) Units() map[godip.Province]godip.Unit { return m.units }
 func (m *mockAdj) Dislodgeds() map[godip.Province]godip.Unit   { return m.dislodgeds }
 func (m *mockAdj) SoloWinner() godip.Nation                    { return m.winner }
 func (m *mockAdj) Dump() ([]byte, error)                       { return m.dumpData, m.dumpErr }
@@ -59,6 +68,20 @@ func (m *mockAdj) Resolve(p godip.Province) error {
 		return m.resolveErr[p]
 	}
 	return nil
+}
+
+func (m *mockAdj) ValidRetreats() map[godip.Province][]godip.Province {
+	if m.validRetreats != nil {
+		return m.validRetreats
+	}
+	return make(map[godip.Province][]godip.Province)
+}
+
+func (m *mockAdj) BuildOptions() map[godip.Nation]internalBuildOption {
+	if m.buildOptionsData != nil {
+		return m.buildOptionsData
+	}
+	return make(map[godip.Nation]internalBuildOption)
 }
 
 // ---- mock phase -------------------------------------------------------------
@@ -779,4 +802,266 @@ func TestMoveSucceeded_UnitArrivedAtDestination_ReturnsTrue(t *testing.T) {
 	if !moveSucceeded(moveOrder, "vie", pre, post) {
 		t.Error("expected true when unit arrived at destination")
 	}
+}
+
+// ---- canonicalOrderText tests -----------------------------------------------
+
+func TestCanonicalOrderText_NonGodipOrder_FallsBackToType(t *testing.T) {
+	is := is.New(t)
+	ord := &stubOrder{t: "Hold"}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie Hold")
+}
+
+func TestCanonicalOrderText_Fleet(t *testing.T) {
+	is := is.New(t)
+	ord := &stubOrder{t: "Hold"}
+	units := map[godip.Province]godip.Unit{"lon": {Type: godip.Fleet, Nation: "England"}}
+	got := canonicalOrderText("lon", ord, units, nil)
+	is.Equal(got, "F lon Hold")
+}
+
+func TestCanonicalOrderText_Move(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Move, targets: []godip.Province{"vie", "bud"}}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie-bud")
+}
+
+func TestCanonicalOrderText_Hold(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Hold}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie H")
+}
+
+func TestCanonicalOrderText_SupportHold(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Support, targets: []godip.Province{"vie", "bud"}}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie S bud")
+}
+
+func TestCanonicalOrderText_SupportMove(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Support, targets: []godip.Province{"vie", "bud", "tri"}}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie S bud-tri")
+}
+
+func TestCanonicalOrderText_Convoy(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Convoy, targets: []godip.Province{"ion", "nap", "tun"}}
+	units := map[godip.Province]godip.Unit{"ion": {Type: godip.Fleet, Nation: "Italy"}}
+	got := canonicalOrderText("ion", ord, units, nil)
+	is.Equal(got, "F ion C nap-tun")
+}
+
+func TestCanonicalOrderText_Build(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Build, targets: []godip.Province{"lon"}}
+	units := map[godip.Province]godip.Unit{}
+	got := canonicalOrderText("lon", ord, units, nil)
+	is.Equal(got, "Build A lon")
+}
+
+func TestCanonicalOrderText_Disband(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Disband, targets: []godip.Province{"vie"}}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie disband")
+}
+
+func TestCanonicalOrderText_UnitFromDislodgeds(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Hold}
+	units := map[godip.Province]godip.Unit{}
+	dislodgeds := map[godip.Province]godip.Unit{"bud": {Type: godip.Fleet, Nation: "Austria"}}
+	got := canonicalOrderText("bud", ord, units, dislodgeds)
+	is.Equal(got, "F bud H")
+}
+
+func TestCanonicalOrderText_MoveNoTargets_FallsBack(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Move, targets: nil}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie Move")
+}
+
+func TestCanonicalOrderText_ConvoyNoTargets_FallsBack(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Convoy, targets: nil}
+	units := map[godip.Province]godip.Unit{"ion": {Type: godip.Fleet, Nation: "Italy"}}
+	got := canonicalOrderText("ion", ord, units, nil)
+	is.Equal(got, "F ion Convoy")
+}
+
+func TestCanonicalOrderText_BuildNoTargets_FallsBack(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Build, targets: nil}
+	units := map[godip.Province]godip.Unit{}
+	got := canonicalOrderText("lon", ord, units, nil)
+	is.Equal(got, "A lon Build")
+}
+
+func TestCanonicalOrderText_DisbandNoTargets_FallsBack(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Disband, targets: nil}
+	units := map[godip.Province]godip.Unit{"vie": {Type: godip.Army}}
+	got := canonicalOrderText("vie", ord, units, nil)
+	is.Equal(got, "A vie Disband")
+}
+
+// ---- orderOutcome tests -----------------------------------------------------
+
+func TestOrderOutcome_SuccessfulMove(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Move, targets: []godip.Province{"vie", "bud"}}
+	outcome := orderOutcome(ord, "vie", true, nil)
+	is.Equal(outcome, "success")
+}
+
+func TestOrderOutcome_BouncedMove(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Move, targets: []godip.Province{"vie", "bud"}}
+	outcome := orderOutcome(ord, "vie", false, nil)
+	is.Equal(outcome, "bounced")
+}
+
+func TestOrderOutcome_HoldSuccess(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Hold}
+	outcome := orderOutcome(ord, "vie", true, map[godip.Province]godip.Unit{})
+	is.Equal(outcome, "success")
+}
+
+func TestOrderOutcome_Dislodged(t *testing.T) {
+	is := is.New(t)
+	ord := &mockOrder{typ: godip.Hold}
+	postDislodgeds := map[godip.Province]godip.Unit{"vie": {Type: godip.Army, Nation: "Austria"}}
+	outcome := orderOutcome(ord, "vie", true, postDislodgeds)
+	is.Equal(outcome, "dislodged")
+}
+
+func TestOrderOutcome_Failed(t *testing.T) {
+	is := is.New(t)
+	ord := &stubOrder{t: "Support"}
+	outcome := orderOutcome(ord, "vie", false, map[godip.Province]godip.Unit{})
+	is.Equal(outcome, "failed")
+}
+
+// ---- game.ValidRetreats / BuildOptions tests --------------------------------
+
+func TestGame_ValidRetreats_DelegatesToAdj(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	g := &game{adj: adj, parser: &mockParser{}}
+	result := g.ValidRetreats()
+	is.NotNil(result)
+	is.Equal(len(result), 0)
+}
+
+func TestGame_ValidRetreats_ConvertsToStrings(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.validRetreats = map[godip.Province][]godip.Province{
+		"vie": {"bud", "tri"},
+	}
+	g := &game{adj: adj, parser: &mockParser{}}
+	result := g.ValidRetreats()
+	is.Equal(len(result), 1)
+	dests := result["vie"]
+	is.Equal(len(dests), 2)
+}
+
+func TestGame_BuildOptions_DelegatesToAdj(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	g := &game{adj: adj, parser: &mockParser{}}
+	result := g.BuildOptions()
+	is.NotNil(result)
+	is.Equal(len(result), 0)
+}
+
+func TestGame_BuildOptions_ConvertsToStrings(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.buildOptionsData = map[godip.Nation]internalBuildOption{
+		"England": {Delta: 1, AvailableHomes: []godip.Province{"lon"}},
+	}
+	g := &game{adj: adj, parser: &mockParser{}}
+	result := g.BuildOptions()
+	is.Equal(len(result), 1)
+	opt := result["England"]
+	is.Equal(opt.Delta, 1)
+	is.Equal(len(opt.AvailableHomes), 1)
+	is.Equal(opt.AvailableHomes[0], "lon")
+}
+
+func TestResolve_PopulatesNationFromPreUnits(t *testing.T) {
+	is := is.New(t)
+	order := &stubOrder{t: "Hold"}
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Movement, year: 1901, season: godip.Spring}
+	adj.orders["vie"] = order
+	adj.units["vie"] = godip.Unit{Type: godip.Army, Nation: "Austria"}
+	nextAdj := newMockAdj()
+	nextAdj.phase = &mockPhase{typ: godip.Retreat, year: 1901, season: godip.Spring}
+	adj.nextAdj = nextAdj
+
+	g := &game{adj: adj, parser: &mockParser{}}
+	result, err := g.Resolve()
+
+	is.NoErr(err)
+	is.Equal(len(result.Orders), 1)
+	is.Equal(result.Orders[0].Nation, "Austria")
+	is.Equal(result.Orders[0].IsNMR, false)
+}
+
+func TestResolve_NMROrdersMarkedIsNMR(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.phase = &mockPhase{
+		typ:    godip.Movement,
+		year:   1901,
+		season: godip.Spring,
+		defaultOrderFn: func(p godip.Province) adjOrder {
+			return &stubOrder{t: "Hold"}
+		},
+	}
+	// No player-submitted orders; NMR will add a hold for the unit.
+	adj.units["vie"] = godip.Unit{Type: godip.Army, Nation: "Austria"}
+	nextAdj := newMockAdj()
+	nextAdj.phase = &mockPhase{typ: godip.Retreat, year: 1901, season: godip.Spring}
+	adj.nextAdj = nextAdj
+
+	g := &game{adj: adj, parser: &mockParser{}}
+	result, err := g.Resolve()
+
+	is.NoErr(err)
+	is.Equal(len(result.Orders), 1)
+	is.Equal(result.Orders[0].Nation, "Austria")
+	is.Equal(result.Orders[0].IsNMR, true)
+}
+
+func TestResolve_PopulatesSeasonInResult(t *testing.T) {
+	is := is.New(t)
+	adj := newMockAdj()
+	adj.phase = &mockPhase{typ: godip.Movement, year: 1901, season: godip.Spring}
+	nextAdj := newMockAdj()
+	nextAdj.phase = &mockPhase{typ: godip.Retreat, year: 1901, season: godip.Spring}
+	adj.nextAdj = nextAdj
+
+	g := &game{adj: adj, parser: &mockParser{}}
+	result, err := g.Resolve()
+
+	is.NoErr(err)
+	is.Equal(result.Season, string(godip.Spring))
 }

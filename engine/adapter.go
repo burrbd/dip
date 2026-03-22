@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/zond/godip"
+	"github.com/zond/godip/orders"
 	"github.com/zond/godip/state"
 	"github.com/zond/godip/variants/classical"
 	"github.com/zond/godip/variants/common"
@@ -40,6 +41,11 @@ type gameState interface {
 	Next() (gameState, error)
 	SoloWinner() godip.Nation
 	Dump() ([]byte, error)
+	// ValidRetreats returns a map from dislodged province to valid retreat
+	// destination provinces. An empty slice means the unit must disband.
+	ValidRetreats() map[godip.Province][]godip.Province
+	// BuildOptions returns build/disband requirements per nation.
+	BuildOptions() map[godip.Nation]internalBuildOption
 }
 
 // Load restores an Engine from a JSON snapshot produced by Dump.
@@ -103,6 +109,13 @@ type UnitInfo struct {
 	Nation string
 }
 
+// BuildOption describes how many units a nation must build or disband and
+// which home supply centres are available for new builds.
+type BuildOption struct {
+	Delta          int      // positive = builds available, negative = disbands required
+	AvailableHomes []string // populated only when Delta > 0
+}
+
 // Engine is the public interface for interacting with a running Diplomacy game.
 // All methods operate on the current game phase.
 type Engine interface {
@@ -129,11 +142,17 @@ type Engine interface {
 	SupplyCenters() map[string]int
 	// Units returns all units on the board keyed by province name.
 	Units() map[string]UnitInfo
+	// ValidRetreats returns a map from dislodged province to valid retreat
+	// destination provinces. An empty slice means the unit must disband.
+	ValidRetreats() map[string][]string
+	// BuildOptions returns build/disband requirements per nation.
+	BuildOptions() map[string]BuildOption
 }
 
 // ResolutionResult summarises what happened when a phase was adjudicated.
 type ResolutionResult struct {
-	Phase  string
+	Phase  string // godip phase type, e.g. "Movement"
+	Season string // godip season, e.g. "Spring"
 	Year   int
 	Orders []OrderResult
 }
@@ -141,8 +160,11 @@ type ResolutionResult struct {
 // OrderResult represents the outcome of a single order after adjudication.
 type OrderResult struct {
 	Province string
-	Order    string
+	Order    string // canonical order text (e.g. "A lon H", "F lon-nth")
+	Nation   string // owning nation at the time the order was staged
 	Success  bool
+	IsNMR    bool   // true when the order was auto-filled (no player submission)
+	Outcome  string // "success", "bounced", "dislodged", or "failed"
 }
 
 // game implements Engine around a gameState.
@@ -209,16 +231,21 @@ func (g *game) SubmitOrder(nation, orderText string) error {
 func (g *game) Resolve() (ResolutionResult, error) {
 	phase := g.adj.Phase()
 	result := ResolutionResult{
-		Phase: string(phase.Type()),
-		Year:  phase.Year(),
+		Phase:  string(phase.Type()),
+		Season: string(phase.Season()),
+		Year:   phase.Year(),
 	}
 
-	// Snapshot player orders and unit positions before NMR fill and Next().
-	stagedOrders := g.adj.Orders()
+	// Snapshot player orders, unit positions, and dislodgeds before NMR fill.
+	playerOrders := g.adj.Orders()
 	preUnits := g.adj.Units()
+	preDislodgeds := g.adj.Dislodgeds()
 
 	// Fill NMR so all units have orders before adjudication.
 	fillNMR(g.adj)
+
+	// Capture all orders (player + NMR) before advancing.
+	allOrders := g.adj.Orders()
 
 	// Advance the state — this is where godip adjudicates all orders.
 	next, err := g.adj.Next()
@@ -229,12 +256,23 @@ func (g *game) Resolve() (ResolutionResult, error) {
 	g.advanced = true
 
 	postUnits := g.adj.Units()
+	postDislodgeds := g.adj.Dislodgeds()
 
-	for prov, ord := range stagedOrders {
+	for prov, ord := range allOrders {
+		_, isPlayer := playerOrders[prov]
+		nation := string(preUnits[prov].Nation)
+		if nation == "" {
+			nation = string(preDislodgeds[prov].Nation)
+		}
+		succeeded := moveSucceeded(ord, prov, preUnits, postUnits)
+		outcome := orderOutcome(ord, prov, succeeded, postDislodgeds)
 		result.Orders = append(result.Orders, OrderResult{
 			Province: string(prov),
-			Order:    string(ord.Type()),
-			Success:  moveSucceeded(ord, prov, preUnits, postUnits),
+			Order:    canonicalOrderText(prov, ord, preUnits, preDislodgeds),
+			Nation:   nation,
+			Success:  succeeded,
+			IsNMR:    !isPlayer,
+			Outcome:  outcome,
 		})
 	}
 	return result, nil
@@ -264,6 +302,103 @@ func moveSucceeded(ord adjOrder, src godip.Province, pre, post map[godip.Provinc
 	}
 	return false
 }
+
+// canonicalOrderText formats an order as a human-readable string using the
+// unit abbreviation derived from preUnits/preDislodgeds and, where possible,
+// the order's Targets() for move destinations.
+func canonicalOrderText(prov godip.Province, ord adjOrder, units, dislodgeds map[godip.Province]godip.Unit) string {
+	unitAbbr := "A"
+	u, inUnits := units[prov]
+	if !inUnits {
+		u = dislodgeds[prov]
+	}
+	if u.Type == godip.Fleet {
+		unitAbbr = "F"
+	}
+
+	gOrd, ok := ord.(godip.Order)
+	if !ok {
+		return fmt.Sprintf("%s %s %s", unitAbbr, prov, ord.Type())
+	}
+	targets := gOrd.Targets()
+	switch gOrd.Type() {
+	case godip.Move:
+		if len(targets) >= 2 {
+			return fmt.Sprintf("%s %s-%s", unitAbbr, targets[0], targets[1])
+		}
+	case godip.Hold:
+		return fmt.Sprintf("%s %s H", unitAbbr, prov)
+	case godip.Support:
+		if len(targets) >= 3 {
+			return fmt.Sprintf("%s %s S %s-%s", unitAbbr, targets[0], targets[1], targets[2])
+		}
+		if len(targets) >= 2 {
+			return fmt.Sprintf("%s %s S %s", unitAbbr, targets[0], targets[1])
+		}
+	case godip.Convoy:
+		if len(targets) >= 3 {
+			return fmt.Sprintf("%s %s C %s-%s", unitAbbr, targets[0], targets[1], targets[2])
+		}
+	case godip.Build:
+		if len(targets) >= 1 {
+			return fmt.Sprintf("Build %s %s", unitAbbr, targets[0])
+		}
+	case godip.Disband:
+		if len(targets) >= 1 {
+			return fmt.Sprintf("%s %s disband", unitAbbr, targets[0])
+		}
+	}
+	return fmt.Sprintf("%s %s %s", unitAbbr, prov, ord.Type())
+}
+
+// orderOutcome returns the human-readable outcome of an order after
+// adjudication: "success", "bounced", "dislodged", or "failed".
+func orderOutcome(ord adjOrder, prov godip.Province, succeeded bool, postDislodgeds map[godip.Province]godip.Unit) string {
+	gOrd, ok := ord.(godip.Order)
+	if ok && gOrd.Type() == godip.Move {
+		if succeeded {
+			return "success"
+		}
+		return "bounced"
+	}
+	if _, wasDislodged := postDislodgeds[prov]; wasDislodged {
+		return "dislodged"
+	}
+	if !succeeded {
+		return "failed"
+	}
+	return "success"
+}
+
+// ValidRetreats returns a map from dislodged province to valid retreat destinations.
+func (g *game) ValidRetreats() map[string][]string {
+	result := make(map[string][]string)
+	for prov, dests := range g.adj.ValidRetreats() {
+		strs := make([]string, len(dests))
+		for i, d := range dests {
+			strs[i] = string(d)
+		}
+		result[string(prov)] = strs
+	}
+	return result
+}
+
+// BuildOptions returns build/disband requirements per nation.
+func (g *game) BuildOptions() map[string]BuildOption {
+	result := make(map[string]BuildOption)
+	for nation, opt := range g.adj.BuildOptions() {
+		homes := make([]string, len(opt.AvailableHomes))
+		for i, h := range opt.AvailableHomes {
+			homes[i] = string(h)
+		}
+		result[string(nation)] = BuildOption{
+			Delta:          opt.Delta,
+			AvailableHomes: homes,
+		}
+	}
+	return result
+}
+
 
 // Dump serialises the current game state to JSON.
 func (g *game) Dump() ([]byte, error) {
@@ -309,6 +444,13 @@ func (g *game) Units() map[string]UnitInfo {
 		}
 	}
 	return result
+}
+
+// internalBuildOption is the gameState-internal equivalent of BuildOption
+// using godip types.
+type internalBuildOption struct {
+	Delta          int
+	AvailableHomes []godip.Province
 }
 
 // ---- stateWrapper: adapts *state.State to gameState -------------------------
@@ -393,6 +535,83 @@ func (w *stateWrapper) SoloWinner() godip.Nation {
 		return w.variant.SoloWinner(w.st)
 	}
 	return ""
+}
+
+// ValidRetreats returns a map from dislodged province to valid retreat destinations.
+// An empty slice means the unit must disband (no valid retreats available).
+func (w *stateWrapper) ValidRetreats() map[godip.Province][]godip.Province {
+	result := make(map[godip.Province][]godip.Province)
+	dislodgeds := w.st.Dislodgeds()
+	if len(dislodgeds) == 0 {
+		return result
+	}
+	// Initialise all dislodged provinces with empty slices (must disband by default).
+	for prov := range dislodgeds {
+		result[prov] = []godip.Province{}
+	}
+	// Collect the set of nations with dislodged units.
+	nations := make(map[godip.Nation]bool)
+	for _, unit := range dislodgeds {
+		nations[unit.Nation] = true
+	}
+	// Use godip's Options API to find valid retreat destinations per nation.
+	// state.Options returns: Province → OrderType → SrcProvince → Province(dst)
+	for nation := range nations {
+		opts := w.st.Options([]godip.Order{orders.MoveOrder}, nation)
+		for _, orderTypeMap := range opts {
+			for _, srcMap := range orderTypeMap {
+				for srcVal, dstMap := range srcMap {
+					srcProv := godip.Province(srcVal.(godip.SrcProvince))
+					dests := make([]godip.Province, 0, len(dstMap))
+					for dstVal := range dstMap {
+						dests = append(dests, dstVal.(godip.Province))
+					}
+					result[srcProv] = dests
+				}
+			}
+		}
+	}
+	return result
+}
+
+// BuildOptions returns build/disband requirements per nation for the current
+// Adjustment phase.
+func (w *stateWrapper) BuildOptions() map[godip.Nation]internalBuildOption {
+	graph := w.st.Graph()
+	currentSCs := w.st.SupplyCenters()
+
+	scCount := make(map[godip.Nation]int)
+	freeHomeSCs := make(map[godip.Nation][]godip.Province)
+	for sc, nation := range currentSCs {
+		scCount[nation]++
+		// A home SC is one whose original graph owner matches the current owner.
+		if orig := graph.SC(sc); orig != nil && *orig == nation {
+			if _, _, occupied := w.st.Unit(sc); !occupied {
+				freeHomeSCs[nation] = append(freeHomeSCs[nation], sc)
+			}
+		}
+	}
+
+	unitCount := make(map[godip.Nation]int)
+	for _, unit := range w.st.Units() {
+		unitCount[unit.Nation]++
+	}
+
+	result := make(map[godip.Nation]internalBuildOption)
+	for _, nation := range w.variant.Nations {
+		rawDelta := scCount[nation] - unitCount[nation]
+		free := freeHomeSCs[nation]
+		delta := rawDelta
+		var available []godip.Province
+		if rawDelta > 0 {
+			if rawDelta > len(free) {
+				delta = len(free)
+			}
+			available = free
+		}
+		result[nation] = internalBuildOption{Delta: delta, AvailableHomes: available}
+	}
+	return result
 }
 
 func (w *stateWrapper) Dump() ([]byte, error) {

@@ -28,9 +28,9 @@ Never mark a story done if any test is failing or any criterion is unmet.
 - [x] Story 10b — Map Rendering Fixes: Labels, Unit Colours, and Glyph Geometry
 - [ ] Story 10c — Zoomed /map with Territory and Radius (deferred)
 - [x] Story 10d — Replace oksvg with tdewolff/canvas for proper text rendering
-- [ ] Story 14 — Adjudication Order Summary
-- [ ] Story 15 — Order Submission Acknowledgement
-- [ ] Story 16 — Phase Transition Guidance
+- [x] Story 14 — Adjudication Order Summary
+- [x] Story 15 — Order Submission Acknowledgement
+- [x] Story 16 — Phase Transition Guidance
 - [ ] Story 13 — Lambda / EventBridge Deployment
 - [ ] Story 11 — Slack Platform Adapter
 - [ ] Story 12 — WhatsApp Platform Adapter (optional)

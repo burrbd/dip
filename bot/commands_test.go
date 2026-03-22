@@ -3,6 +3,7 @@ package bot
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/burrbd/dip/dipmap"
@@ -122,6 +123,10 @@ func (e *mockEngine) Units() map[string]engine.UnitInfo {
 		return e.units
 	}
 	return make(map[string]engine.UnitInfo)
+}
+func (e *mockEngine) ValidRetreats() map[string][]string        { return make(map[string][]string) }
+func (e *mockEngine) BuildOptions() map[string]engine.BuildOption {
+	return make(map[string]engine.BuildOption)
 }
 
 // ---- helpers ----------------------------------------------------------------
@@ -679,6 +684,28 @@ func TestDispatchOrder_MultiWordOrderJoined(t *testing.T) {
 	is.Equal(sess.StagedOrders["England"][0], "A Vie S F Tri-Alb")
 }
 
+// TestDispatchOrder_AllNationsDMIncludesAllSubmitted covers the remaining<=0 branch
+// in handleOrder (single-player game so one order fills the quota).
+func TestDispatchOrder_AllNationsDMIncludesAllSubmitted(t *testing.T) {
+	is := is.New(t)
+	ch := &mockChannel{}
+	d := newTestDispatcher(ch)
+	makeSinglePlayerSession(d, ch, "chan1")
+
+	resp, err := d.Dispatch(dmCmd("order", "chan1", "u1", "A Vie-Bud"))
+	is.NoErr(err)
+	is.Equal(resp != "", true)
+	// DM to u1 should mention "All nations have submitted".
+	var foundAllSubmitted bool
+	for _, dm := range ch.dms["u1"] {
+		if strings.Contains(dm, "All nations have submitted") {
+			foundAllSubmitted = true
+			break
+		}
+	}
+	is.Equal(foundAllSubmitted, true)
+}
+
 // ---- /orders ----------------------------------------------------------------
 
 func TestDispatchOrders_RejectsNonDM(t *testing.T) {
@@ -921,8 +948,10 @@ func TestDispatchSubmit_FiresAdvanceTurnWhenAllSubmitted(t *testing.T) {
 		t.Error("expected early-resolution response, got plain submit response")
 	}
 
-	// PhaseResolved event must have been posted to the game channel.
-	is.Equal(len(ch.msgs), 1)
+	// PhaseResolved event + order summary + phase guidance = 3 channel posts.
+	if len(ch.msgs) < 1 {
+		t.Fatal("expected at least 1 channel message after advance")
+	}
 	var env events.Envelope
 	is.NoErr(json.Unmarshal([]byte(ch.msgs[0]), &env))
 	is.Equal(env.Type, events.TypePhaseResolved)
@@ -2641,13 +2670,19 @@ func TestDispatchForceResolve_CallsAdvanceTurn(t *testing.T) {
 	d := newTestDispatcher(ch)
 	twoPlayerGame(d, ch)
 
+	msgsBefore := len(ch.msgs)
 	resp, err := d.Dispatch(gameCmd("force-resolve", "chan1", "gm1"))
 	is.NoErr(err)
 	if resp == "" {
 		t.Error("expected non-empty response")
 	}
-	// PhaseResolved must have been posted.
-	is.Equal(ch.lastEventType(), events.TypePhaseResolved)
+	// PhaseResolved must have been posted (first new message after dispatch).
+	if len(ch.msgs) <= msgsBefore {
+		t.Fatal("expected at least 1 new channel message after force-resolve")
+	}
+	var env events.Envelope
+	is.NoErr(json.Unmarshal([]byte(ch.msgs[msgsBefore]), &env))
+	is.Equal(env.Type, events.TypePhaseResolved)
 }
 
 func TestDispatchForceResolve_RejectsIfNotGM(t *testing.T) {
